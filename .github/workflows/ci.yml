@@ -11,8 +11,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: yarn
-          cache-dependency-path: mobile/yarn.lock
       - run: corepack enable
       - run: yarn install --immutable
       - run: echo '/// <reference types="expo/types" />' > expo-env.d.ts
