@@ -63,10 +63,10 @@ sequenceDiagram
 
 ## Data sources
 
-- **출발지·도착지 장소:** [Kakao Local 키워드 검색](https://developers.kakao.com/docs/ko/kakaomap/rest-api)을 사용자가 요청할 때 호출한다. 선택 결과의 좌표를 경로 API 입력으로 쓴다. 현재 핵심 실험은 좌표를 직접 지정했으므로 이 입력 검색 UI는 아직 검증하지 않았다. 결과가 없으면 검색어를 다시 입력하게 한다.
+- **출발지·도착지 장소:** [Kakao Local 키워드 검색](https://developers.kakao.com/docs/ko/kakaomap/rest-api)을 요청 때 호출한다. 서울역·강남역 검색 모두 HTTP 200으로 좌표가 포함된 후보 5개를 반환했다 ([실호출 샘플](samples/kakao-place-search-current.json)). 결과가 없으면 검색어를 다시 입력한다. 앱의 검색·선택 UI는 미구현이다.
 - **대중교통 경로:** [Kakao 대중교통 경로 API](https://developers.kakao.com/docs/ko/kakaomap/rest-api)를 검색 요청 때 호출한다. 서울역→강남역 한 번의 실호출에서 HTTP 200과 15개 경로를 받았고, 11개가 60분 미만이었다. 첫 경로는 36분 39초, 환승 1회였다. 경로가 없거나 모두 60분 이상이면 가능한 경로가 없다고 안내한다.
 - **경로 주변 식당:** [Kakao Local 음식점 카테고리 FD6](https://developers.kakao.com/docs/ko/kakaomap/rest-api)을 선택 경로마다 한 번 호출한다. 실험은 `page=1`, `size=15`, `sort=accuracy`로 검색했다. 첫 페이지 15곳 중 5곳이 경로선에서 직선거리 1km 이내였다. `total_count`는 16,858, `pageable_count`는 45여서 첫 페이지 밖의 후보는 이번 방식으로 찾지 못할 수 있다. 1km는 실제 도보 거리가 아니다. 현재 Kakao 안내의 일일 무료 쿼터는 대중교통 경로 1,000건, 키워드·카테고리 검색 각각 100,000건이며, 추가 쿼터는 경로 10원/호출, 검색 2원/호출로 안내된다. 쿼터·요금은 바뀔 수 있다. ([쿼터·요금](https://developers.kakao.com/docs/ko/getting-started/quota))
-- **지도 바탕:** Expo 문서에서 Expo Go 지원으로 표시된 [`react-native-maps`](https://docs.expo.dev/versions/v58.0.0/sdk/map-view/)를 선택했다. iOS는 Apple Maps, Android는 Google Maps를 바탕 지도로 쓰며, 경로 형상과 Kakao 장소 좌표를 선·핀으로 덧그린다. 앱 통합은 아직 검증하지 않았다. Android 스토어 빌드에는 Google Maps 설정이 추가로 필요하다.
+- **지도 바탕:** Expo Go 지원으로 표시된 [`react-native-maps`](https://docs.expo.dev/versions/v58.0.0/sdk/map-view/)를 설치했다. 개발용 화면에서 정적 경로선과 출발·도착·식당 마커가 Expo Go 실기기에 표시되는 것을 확인했다 ([캡처](map.PNG)). Android 스토어 빌드에는 Google Maps 설정이 필요하다.
 
 실호출은 [`verify-core-flow.mjs`](../scripts/verify-core-flow.mjs)로 수행했다. 결과는 [핵심 검증 샘플](samples/current-core-validation.json), 요약은 [검증 기록](samples/current-flow-validation.md)에 있다. Kakao 키는 앱에 넣지 않고 Convex 환경변수에 둔다. 요청은 사용자가 보낼 때만 실행한다.
 
