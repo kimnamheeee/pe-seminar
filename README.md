@@ -3,3 +3,4 @@
 <!-- 한 줄로: 누구의 어떤 문제를 푸는 앱인지 -->
 
 - [Pitch](docs/01-pitch.md)
+- [System Design](docs/02-system-design.md)
