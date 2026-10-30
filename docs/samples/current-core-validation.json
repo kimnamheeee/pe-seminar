@@ -1,0 +1,269 @@
+{
+  "date": "2026-10-30T09:23:08.250Z",
+  "scenario": {
+    "origin": {
+      "x": 126.9723,
+      "y": 37.5547,
+      "label": "서울역"
+    },
+    "destination": {
+      "x": 127.0276,
+      "y": 37.4979,
+      "label": "강남역"
+    },
+    "restaurantCategoryGroupCode": "FD6"
+  },
+  "transit": {
+    "httpStatus": 200,
+    "routeCount": 15,
+    "routeSummaries": [
+      {
+        "routeIndex": 0,
+        "totalTimeSeconds": 2199,
+        "transfers": 1,
+        "routeType": "SUBWAY"
+      },
+      {
+        "routeIndex": 1,
+        "totalTimeSeconds": 1845,
+        "transfers": 2,
+        "routeType": "SUBWAY"
+      },
+      {
+        "routeIndex": 2,
+        "totalTimeSeconds": 2937,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 3,
+        "totalTimeSeconds": 2992,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 4,
+        "totalTimeSeconds": 2651,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 5,
+        "totalTimeSeconds": 2212,
+        "transfers": 2,
+        "routeType": "BUS_AND_SUBWAY"
+      },
+      {
+        "routeIndex": 6,
+        "totalTimeSeconds": 2218,
+        "transfers": 2,
+        "routeType": "BUS_AND_SUBWAY"
+      },
+      {
+        "routeIndex": 7,
+        "totalTimeSeconds": 2207,
+        "transfers": 2,
+        "routeType": "SUBWAY"
+      },
+      {
+        "routeIndex": 8,
+        "totalTimeSeconds": 2562,
+        "transfers": 1,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 9,
+        "totalTimeSeconds": 2299,
+        "transfers": 2,
+        "routeType": "BUS_AND_SUBWAY"
+      },
+      {
+        "routeIndex": 10,
+        "totalTimeSeconds": 2740,
+        "transfers": 1,
+        "routeType": "BUS_AND_SUBWAY"
+      },
+      {
+        "routeIndex": 11,
+        "totalTimeSeconds": 4870,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 12,
+        "totalTimeSeconds": 3615,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 13,
+        "totalTimeSeconds": 4411,
+        "transfers": 0,
+        "routeType": "BUS"
+      },
+      {
+        "routeIndex": 14,
+        "totalTimeSeconds": 4068,
+        "transfers": 0,
+        "routeType": "BUS"
+      }
+    ],
+    "eligibleRouteRule": "totalTime < 3600 seconds",
+    "selectedRouteIndex": 0
+  },
+  "restaurantSearch": {
+    "httpStatus": 200,
+    "requestCount": 1,
+    "categoryGroupCode": "FD6",
+    "rect": {
+      "left": 126.95476635908032,
+      "bottom": 37.467331688250084,
+      "right": 127.03932385091967,
+      "top": 37.56201181174991
+    },
+    "totalCount": 16858,
+    "pageableCount": 45,
+    "returnedCount": 15,
+    "candidates": [
+      {
+        "id": "34321780",
+        "name": "서관면옥 교대본점",
+        "address": "서울 서초구 서초대로56길 11",
+        "x": 127.01725609065346,
+        "y": 37.49397890313892,
+        "distanceToRouteMeters": 84
+      },
+      {
+        "id": "16421356",
+        "name": "농민백암순대 강남직영점",
+        "address": "서울 강남구 역삼로3길 20-4",
+        "x": 127.03150463098274,
+        "y": 37.49491300989233,
+        "distanceToRouteMeters": 470
+      },
+      {
+        "id": "1372079546",
+        "name": "하이디라오 서초점",
+        "address": "서울 서초구 서초대로77길 54",
+        "x": 127.02480140187946,
+        "y": 37.502564150766105,
+        "distanceToRouteMeters": 567
+      },
+      {
+        "id": "469577034",
+        "name": "유즈라멘 서울역본점",
+        "address": "서울 중구 만리재로 217",
+        "x": 126.96823844833658,
+        "y": 37.556815391728634,
+        "distanceToRouteMeters": 573
+      },
+      {
+        "id": "11486129",
+        "name": "가메골손왕만두 남대문본점",
+        "address": "서울 중구 남대문시장4길 42",
+        "x": 126.97711545793453,
+        "y": 37.55835454736746,
+        "distanceToRouteMeters": 712
+      },
+      {
+        "id": "12793877",
+        "name": "란주칼면",
+        "address": "서울 중구 소공로 64",
+        "x": 126.982148978718,
+        "y": 37.5609773169211,
+        "distanceToRouteMeters": 1219
+      },
+      {
+        "id": "20709046",
+        "name": "황금콩밭",
+        "address": "서울 마포구 마포대로16길 9",
+        "x": 126.95673415318058,
+        "y": 37.550966062730375,
+        "distanceToRouteMeters": 1342
+      },
+      {
+        "id": "11642405",
+        "name": "목멱산방 본점",
+        "address": "서울 중구 퇴계로20길 71",
+        "x": 126.98689405825475,
+        "y": 37.55811276850028,
+        "distanceToRouteMeters": 1379
+      },
+      {
+        "id": "25038356",
+        "name": "임병주 산동칼국수",
+        "address": "서울 서초구 강남대로37길 65",
+        "x": 127.03003042469688,
+        "y": 37.48456982587015,
+        "distanceToRouteMeters": 1467
+      },
+      {
+        "id": "16990385",
+        "name": "쟝블랑제리",
+        "address": "서울 관악구 낙성대역길 8",
+        "x": 126.961968234363,
+        "y": 37.477157623199,
+        "distanceToRouteMeters": 1731
+      },
+      {
+        "id": "27584230",
+        "name": "진미평양냉면 별관",
+        "address": "서울 강남구 학동로 305-3",
+        "x": 127.036047158128,
+        "y": 37.5161357904841,
+        "distanceToRouteMeters": 2131
+      },
+      {
+        "id": "11231325",
+        "name": "필동면옥",
+        "address": "서울 중구 서애로 26",
+        "x": 126.99693958989,
+        "y": 37.5603983847784,
+        "distanceToRouteMeters": 2296
+      },
+      {
+        "id": "8746906",
+        "name": "압구정공주떡",
+        "address": "서울 강남구 논현로161길 10",
+        "x": 127.02746679415719,
+        "y": 37.52356596669052,
+        "distanceToRouteMeters": 2837
+      },
+      {
+        "id": "8552691",
+        "name": "태극당",
+        "address": "서울 중구 동호로24길 7",
+        "x": 127.005070441384,
+        "y": 37.5595045265869,
+        "distanceToRouteMeters": 2951
+      },
+      {
+        "id": "25046575",
+        "name": "뱃고동",
+        "address": "서울 강남구 언주로172길 54",
+        "x": 127.03804340336,
+        "y": 37.5268498895352,
+        "distanceToRouteMeters": 3323
+      }
+    ]
+  },
+  "selectedRestaurantStopCheck": {
+    "selectedRestaurant": {
+      "id": "34321780",
+      "name": "서관면옥 교대본점",
+      "address": "서울 서초구 서초대로56길 11",
+      "x": 127.01725609065346,
+      "y": 37.49397890313892,
+      "distanceToRouteMeters": 84
+    },
+    "routeStopCount": 13,
+    "routeStopObjectFields": [
+      "name"
+    ],
+    "routeStopsWithCoordinates": 0,
+    "nearestStop": null,
+    "walkingChecks": [],
+    "status": "Cannot calculate nearest route stop: transit response has no stop coordinates."
+  },
+  "outcome": "Route and restaurant candidates found; nearest-stop feature is unsupported by returned stop data."
+}

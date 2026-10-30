@@ -1,0 +1,29 @@
+flowchart LR
+  User[사용자]
+
+  subgraph App[모바일 앱 · Expo]
+    UI[Expo 앱<br/>장소 입력 · 경로 선택 · 결과]
+    Map[react-native-maps<br/>경로선 · 식당 핀]
+  end
+
+  subgraph Server[Convex · 서버 함수]
+    Actions[장소 검색 · 경로 조회<br/>경로 주변 식당 검색]
+    Key[Kakao API 키<br/>환경변수]
+  end
+
+  subgraph Kakao[Kakao API]
+    Local[Local 검색<br/>키워드 · 음식점 FD6]
+    Transit[대중교통 경로<br/>옵션 · 좌표 형상]
+  end
+
+  MapData[지도 바탕<br/>iOS: Apple Maps<br/>Android: Google Maps]
+  Excluded[미사용 : 로그인 · 사용자 DB · 푸시 · 파일 저장소]
+
+  User --> UI
+  UI <-->|요청 · 결과| Actions
+  Actions <-->|키워드 · FD6 검색| Local
+  Actions <-->|경로 조회| Transit
+  UI --> Map
+  Map --> MapData
+  Key -.-> Actions
+
