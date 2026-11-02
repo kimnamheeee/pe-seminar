@@ -1,4 +1,8 @@
 .env
 .env*.local
 node_modules/
+.expo/
+dist/
+mobile/convex/_generated/
+mobile/.yarn/install-state.gz
 .DS_Store
