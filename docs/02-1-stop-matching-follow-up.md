@@ -8,7 +8,7 @@
 
 ## 현재 확인된 점
 
-- 기존 Kakao 대중교통 경로 응답 샘플에서 정류장 13개는 이름만 포함하고 좌표와 ID는 제공하지 않았다 ([검증 기록](samples/current-flow-validation.md)).
+- 기존 Kakao 대중교통 경로 응답 샘플에서 정류장 13개는 이름만 포함하고 좌표와 ID는 제공하지 않았다 ([핵심 검증 샘플](samples/current-core-validation.json)).
 - 좌표를 얻기 위해 [TMAP 대중교통 API](https://transit.tmapmobility.com/docs/routes)로 전환하는 방안을 검토했다. 하지만 무료 요금제의 대중교통 경로 API 한도가 하루 10회라, 사용자의 길찾기 요청마다 API를 호출하는 방식은 한도에 걸릴 수 있다고 판단해 TMAP을 선정하지 않았다 ([요금제 안내](https://transit.tmapmobility.com/)).
 - 정류소 위치정보는 경로 탐색 결과처럼 매 요청마다 최신 조회가 필요한 값은 아니므로, 요청 때마다 외부 API를 호출하는 대신 정적인 공개 데이터를 DB에 넣어 조회하는 방안을 검토한다. 공개 정류소 데이터가 자주 바뀌지 않는다는 전제와 갱신 요건은 실제 운영 전에 확인한다.
 - 후보 데이터로 [서울시 버스정류소 위치정보](https://data.seoul.go.kr/dataList/OA-15067/A/1/datasetView.do)를 발견했다. 버스 정류소 좌표와 정류소 ID를 제공하며, 정류소 이름은 중복될 수 있으므로 이름만으로 레코드를 고유하게 식별할 수 없다.
