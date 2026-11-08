@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.15",
+    "@expo/vector-icons": "^15.1.1",
+    "@gorhom/bottom-sheet": "^5.2.14",
     "convex": "^1.31.6",
     "expo": "~58.0.21",
     "expo-constants": "~58.0.14",

@@ -16,52 +16,62 @@ export const getRestaurants = action({
       return [];
     }
 
-    // 5km 격자 중심점 계산
-    const gridCenters = calculateGridCenters(args.routeCoords, 5000);
+    // 경로를 따라 500m 간격으로 샘플 포인트 생성
+    const samplePoints = sampleAlongRoute(args.routeCoords, 500);
 
-    // 각 격자에서 Kakao Local API 호출
-    const allRestaurants: KakaoPlace[] = [];
+    // 각 샘플 포인트에서 300m 반경 식당 검색
+    const allRestaurants: Array<KakaoPlace & { sampleIndex: number }> = [];
     const seenIds = new Set<string>();
 
-    for (const center of gridCenters) {
-      const places = await searchRestaurantsAt(apiKey, center.lat, center.lng);
+    for (let i = 0; i < samplePoints.length; i++) {
+      const point = samplePoints[i];
+      const places = await searchRestaurantsAt(apiKey, point.lat, point.lng, 300);
       for (const place of places) {
         if (!seenIds.has(place.id)) {
           seenIds.add(place.id);
-          allRestaurants.push(place);
+          allRestaurants.push({ ...place, sampleIndex: i });
         }
       }
     }
 
-    // 경로선에서 1km 이내 필터링
-    const filtered = allRestaurants.filter((restaurant) => {
-      const dist = minDistanceToRoute(
-        { lat: restaurant.y, lng: restaurant.x },
-        args.routeCoords
-      );
-      return dist <= 1000;
-    });
+    // 경로선에서 200m 이내만 필터링 + 경로상 위치(progress) 계산
+    const MAX_DISTANCE = 200;
+    const withProgress = allRestaurants
+      .map((restaurant) => {
+        const coord = { lat: Number(restaurant.y), lng: Number(restaurant.x) };
+        const { distance, progress } = getRouteDistanceAndProgress(coord, args.routeCoords);
+        return { ...restaurant, distanceFromRoute: distance, routeProgress: progress };
+      })
+      .filter((r) => r.distanceFromRoute <= MAX_DISTANCE);
 
-    // 거리순 정렬
-    const withDistance = filtered.map((restaurant) => ({
-      ...restaurant,
-      distanceFromRoute: minDistanceToRoute(
-        { lat: restaurant.y, lng: restaurant.x },
-        args.routeCoords
-      ),
-    }));
+    // 샘플 포인트별로 그룹화하여 각 구간에서 가장 가까운 5개씩 선택
+    const RESTAURANTS_PER_POINT = 5;
+    const bySegment = new Map<number, Array<typeof withProgress[0]>>();
+    for (const r of withProgress) {
+      const list = bySegment.get(r.sampleIndex) || [];
+      list.push(r);
+      bySegment.set(r.sampleIndex, list);
+    }
 
-    withDistance.sort((a, b) => a.distanceFromRoute - b.distanceFromRoute);
+    const results: typeof withProgress = [];
+    for (const list of bySegment.values()) {
+      list.sort((a, b) => a.distanceFromRoute - b.distanceFromRoute);
+      results.push(...list.slice(0, RESTAURANTS_PER_POINT));
+    }
+
+    // 경로 진행 순서로 정렬
+    results.sort((a, b) => a.routeProgress - b.routeProgress);
 
     // 결과 변환
-    return withDistance.map((r) => ({
+    return results.map((r) => ({
       id: r.id,
       name: r.place_name,
       category: extractCategory(r.category_name),
       address: r.road_address_name || r.address_name,
-      lat: r.y,
-      lng: r.x,
+      lat: Number(r.y),
+      lng: Number(r.x),
       distanceFromRoute: Math.round(r.distanceFromRoute),
+      routeProgress: r.routeProgress, // 경로 진행률 (0~1)
     }));
   },
 });
@@ -70,131 +80,138 @@ export const getRestaurants = action({
 async function searchRestaurantsAt(
   apiKey: string,
   lat: number,
-  lng: number
+  lng: number,
+  radius: number
 ): Promise<KakaoPlace[]> {
-  const results: KakaoPlace[] = [];
+  const url = new URL(
+    "https://dapi.kakao.com/v2/local/search/category.json"
+  );
+  url.searchParams.set("category_group_code", "FD6"); // 음식점
+  url.searchParams.set("x", String(lng));
+  url.searchParams.set("y", String(lat));
+  url.searchParams.set("radius", String(radius));
+  url.searchParams.set("size", "15"); // 각 포인트에서 최대 15개
 
-  // 최대 3페이지까지 조회 (페이지당 15개, 최대 45개)
-  for (let page = 1; page <= 3; page++) {
-    const url = new URL(
-      "https://dapi.kakao.com/v2/local/search/category.json"
-    );
-    url.searchParams.set("category_group_code", "FD6"); // 음식점
-    url.searchParams.set("x", String(lng));
-    url.searchParams.set("y", String(lat));
-    url.searchParams.set("radius", "2500"); // 2.5km (5km 격자의 절반)
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("size", "15");
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `KakaoAK ${apiKey}`,
+    },
+  });
 
-    const response = await fetch(url.toString(), {
-      headers: {
-        Authorization: `KakaoAK ${apiKey}`,
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`Kakao API 오류: ${response.status}`);
-      break;
-    }
-
-    const data = await response.json();
-    results.push(...data.documents);
-
-    if (data.meta.is_end) {
-      break;
-    }
+  if (!response.ok) {
+    console.error(`Kakao API 오류: ${response.status}`);
+    return [];
   }
 
-  return results;
+  const data = await response.json();
+  return data.documents;
 }
 
-// 5km 격자 중심점 계산
-function calculateGridCenters(
+// 경로를 따라 일정 간격으로 샘플 포인트 생성
+function sampleAlongRoute(
   coords: Array<{ lat: number; lng: number }>,
-  gridSize: number
+  intervalMeters: number
 ): Array<{ lat: number; lng: number }> {
   if (coords.length === 0) return [];
+  if (coords.length === 1) return [coords[0]];
 
-  // 경로의 바운딩 박스 계산
-  let minLat = coords[0].lat;
-  let maxLat = coords[0].lat;
-  let minLng = coords[0].lng;
-  let maxLng = coords[0].lng;
+  const samples: Array<{ lat: number; lng: number }> = [coords[0]];
+  let accumulated = 0;
 
-  for (const coord of coords) {
-    minLat = Math.min(minLat, coord.lat);
-    maxLat = Math.max(maxLat, coord.lat);
-    minLng = Math.min(minLng, coord.lng);
-    maxLng = Math.max(maxLng, coord.lng);
-  }
+  for (let i = 1; i < coords.length; i++) {
+    const segmentLength = haversineDistance(coords[i - 1], coords[i]);
+    accumulated += segmentLength;
 
-  // 위도/경도를 미터로 변환 (대략적인 값)
-  const latDegPerMeter = 1 / 111000;
-  const lngDegPerMeter = 1 / (111000 * Math.cos((minLat * Math.PI) / 180));
-
-  const gridLatSize = gridSize * latDegPerMeter;
-  const gridLngSize = gridSize * lngDegPerMeter;
-
-  const centers: Array<{ lat: number; lng: number }> = [];
-
-  for (let lat = minLat; lat <= maxLat + gridLatSize; lat += gridLatSize) {
-    for (let lng = minLng; lng <= maxLng + gridLngSize; lng += gridLngSize) {
-      centers.push({ lat, lng });
+    // 누적 거리가 interval을 초과할 때마다 샘플 추가
+    while (accumulated >= intervalMeters) {
+      // 세그먼트 내에서 interpolate
+      const overshoot = accumulated - intervalMeters;
+      const t = (segmentLength - overshoot) / segmentLength;
+      const sample = {
+        lat: coords[i - 1].lat + t * (coords[i].lat - coords[i - 1].lat),
+        lng: coords[i - 1].lng + t * (coords[i].lng - coords[i - 1].lng),
+      };
+      samples.push(sample);
+      accumulated -= intervalMeters;
     }
   }
 
-  return centers;
+  // 마지막 점 추가 (중복 방지)
+  const last = coords[coords.length - 1];
+  const lastSample = samples[samples.length - 1];
+  if (haversineDistance(last, lastSample) > 50) {
+    samples.push(last);
+  }
+
+  return samples;
 }
 
-// 점에서 경로까지의 최소 거리 (미터)
-function minDistanceToRoute(
+// 점에서 경로까지의 최소 거리와 경로상 진행률 (0~1)
+function getRouteDistanceAndProgress(
   point: { lat: number; lng: number },
   route: Array<{ lat: number; lng: number }>
-): number {
+): { distance: number; progress: number } {
+  if (route.length === 0) {
+    return { distance: Infinity, progress: 0 };
+  }
+  if (route.length === 1) {
+    return { distance: haversineDistance(point, route[0]), progress: 0 };
+  }
+
+  // 전체 경로 길이 계산
+  let totalLength = 0;
+  const segmentLengths: number[] = [];
+  for (let i = 0; i < route.length - 1; i++) {
+    const len = haversineDistance(route[i], route[i + 1]);
+    segmentLengths.push(len);
+    totalLength += len;
+  }
+
   let minDist = Infinity;
+  let progressAtMinDist = 0;
+  let accumulatedLength = 0;
 
   for (let i = 0; i < route.length - 1; i++) {
-    const dist = pointToSegmentDistance(point, route[i], route[i + 1]);
-    minDist = Math.min(minDist, dist);
+    const { distance, t } = pointToSegmentInfo(point, route[i], route[i + 1]);
+
+    if (distance < minDist) {
+      minDist = distance;
+      // 현재 세그먼트까지의 누적 길이 + 세그먼트 내 위치
+      progressAtMinDist = (accumulatedLength + t * segmentLengths[i]) / totalLength;
+    }
+
+    accumulatedLength += segmentLengths[i];
   }
 
-  // 경로가 1개 점인 경우
-  if (route.length === 1) {
-    return haversineDistance(point, route[0]);
-  }
-
-  return minDist;
+  return { distance: minDist, progress: progressAtMinDist };
 }
 
-// 점에서 선분까지의 거리
-function pointToSegmentDistance(
+// 점에서 선분까지의 거리와 선분 내 위치 (0~1)
+function pointToSegmentInfo(
   point: { lat: number; lng: number },
   segStart: { lat: number; lng: number },
   segEnd: { lat: number; lng: number }
-): number {
-  const d1 = haversineDistance(point, segStart);
-  const d2 = haversineDistance(point, segEnd);
+): { distance: number; t: number } {
   const segLen = haversineDistance(segStart, segEnd);
 
-  if (segLen === 0) return d1;
+  if (segLen === 0) {
+    return { distance: haversineDistance(point, segStart), t: 0 };
+  }
 
-  // 투영점 계산 (간소화된 버전)
-  const t = Math.max(
-    0,
-    Math.min(
-      1,
-      ((point.lat - segStart.lat) * (segEnd.lat - segStart.lat) +
-        (point.lng - segStart.lng) * (segEnd.lng - segStart.lng)) /
-        (segLen * segLen / 111000 / 111000)
-    )
-  );
+  // 투영점 계산 (t: 0~1)
+  const dx = segEnd.lng - segStart.lng;
+  const dy = segEnd.lat - segStart.lat;
+  const px = point.lng - segStart.lng;
+  const py = point.lat - segStart.lat;
+
+  const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy)));
 
   const proj = {
     lat: segStart.lat + t * (segEnd.lat - segStart.lat),
     lng: segStart.lng + t * (segEnd.lng - segStart.lng),
   };
 
-  return haversineDistance(point, proj);
+  return { distance: haversineDistance(point, proj), t };
 }
 
 // Haversine 거리 계산 (미터)
@@ -230,8 +247,8 @@ interface KakaoPlace {
   category_name: string;
   address_name: string;
   road_address_name: string;
-  x: number; // 경도
-  y: number; // 위도
+  x: string; // 경도 (Kakao API returns string)
+  y: string; // 위도 (Kakao API returns string)
 }
 
 interface Restaurant {
@@ -242,4 +259,5 @@ interface Restaurant {
   lat: number;
   lng: number;
   distanceFromRoute: number;
+  routeProgress: number; // 경로 진행률 (0~1)
 }

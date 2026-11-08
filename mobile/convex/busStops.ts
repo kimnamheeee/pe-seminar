@@ -44,6 +44,114 @@ export const count = query({
   },
 });
 
+// 여러 식당에 대한 하차 정류장 일괄 조회
+export const getNearestStopsForRestaurants = query({
+  args: {
+    restaurants: v.array(
+      v.object({
+        id: v.string(),
+        lat: v.number(),
+        lng: v.number(),
+        routeProgress: v.number(),
+      })
+    ),
+    legs: v.array(
+      v.object({
+        type: v.string(),
+        startProgress: v.number(),
+        stations: v.array(
+          v.object({
+            name: v.string(),
+            lat: v.number(),
+            lng: v.number(),
+          })
+        ),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    // 모든 정류장 이름에 대해 DB에서 좌표 조회 (캐싱)
+    const stationNameSet = new Set<string>();
+    for (const leg of args.legs) {
+      for (const station of leg.stations) {
+        stationNameSet.add(normalizeName(station.name));
+      }
+    }
+
+    const stationCoords = new Map<string, { lat: number; lng: number }>();
+    for (const normalizedName of stationNameSet) {
+      const candidates = await ctx.db
+        .query("busStops")
+        .withIndex("by_normalizedName", (q) => q.eq("normalizedName", normalizedName))
+        .collect();
+      if (candidates.length > 0) {
+        // 첫 번째 후보 사용 (이름 중복 시 더 정확한 매칭 필요할 수 있음)
+        stationCoords.set(normalizedName, { lat: candidates[0].lat, lng: candidates[0].lng });
+      }
+    }
+
+    // 각 식당에 대해 가장 가까운 정류장 계산
+    const results: Record<string, {
+      found: boolean;
+      stop?: { name: string; lat: number; lng: number; distanceFromRestaurant: number };
+      stopLegIndex?: number;
+    }> = {};
+
+    for (const restaurant of args.restaurants) {
+      // 이 식당 이전에 시작하는 버스 구간의 정류장만 고려
+      const relevantStations: Array<{ name: string; lat: number; lng: number; legIndex: number }> = [];
+
+      for (let i = 0; i < args.legs.length; i++) {
+        const leg = args.legs[i];
+        if (leg.type === "BUS" && leg.startProgress <= restaurant.routeProgress) {
+          for (const station of leg.stations) {
+            const coords = stationCoords.get(normalizeName(station.name));
+            if (coords) {
+              relevantStations.push({ name: station.name, ...coords, legIndex: i });
+            }
+          }
+        }
+      }
+
+      if (relevantStations.length === 0) {
+        results[restaurant.id] = { found: false };
+        continue;
+      }
+
+      // 식당에서 가장 가까운 정류장 찾기
+      let nearestStation = relevantStations[0];
+      let minDistance = haversineDistance(
+        { lat: restaurant.lat, lng: restaurant.lng },
+        { lat: relevantStations[0].lat, lng: relevantStations[0].lng }
+      );
+
+      for (const station of relevantStations.slice(1)) {
+        const dist = haversineDistance(
+          { lat: restaurant.lat, lng: restaurant.lng },
+          { lat: station.lat, lng: station.lng }
+        );
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestStation = station;
+        }
+      }
+
+      results[restaurant.id] = {
+        found: true,
+        stop: {
+          name: nearestStation.name,
+          lat: nearestStation.lat,
+          lng: nearestStation.lng,
+          distanceFromRestaurant: Math.round(minDistance),
+        },
+        stopLegIndex: nearestStation.legIndex,
+      };
+    }
+
+    return results;
+  },
+});
+
 // 하차 정류장 찾기
 export const getNearestStop = query({
   args: {
