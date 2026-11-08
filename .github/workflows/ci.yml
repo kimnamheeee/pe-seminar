@@ -14,5 +14,4 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: echo '/// <reference types="expo/types" />' > expo-env.d.ts
-      - run: npx convex codegen
       - run: yarn typecheck
