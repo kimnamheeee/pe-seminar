@@ -8,23 +8,19 @@
 
 ```mermaid
 flowchart LR
-    A[홈: 경로 선택] -->|1 경로 탭| B(routes.getRoutes)
-    B -->|2 Kakao API| C[경로 목록]
-    C -->|3 경로 선택| D(restaurants.getRestaurants)
-    D -->|4 Kakao Local API| E[(식당 목록)]
-    E -->|5 렌더링| F[지도 + 바텀시트]
-    F -->|6 스크롤/탭| G(busStops.getNearestStopsForRestaurants)
-    G -->|7 조회| H[(busStops 테이블)]
-    H -->|8 반환| I[식당별 경로 안내]
+    A[식당 목록] -->|1 식당 선택| B(getNearestStops)
+    B -->|2 조회| C[(busStops)]
+    C -->|3 반환| D[경로 안내 표시]
 ```
 
 ## 스크린샷
 
-<!-- 스크린샷 추가 예정 -->
+### 1. 경로 선택 후 식당 목록 표시
 
-1. 앱 진입 — 경로 후보 목록
-2. 경로 선택 — 지도에 경로선 표시
-3. 식당 목록 로딩 — 바텀시트에 식당 표시
-4. 식당 선택 — 경로 하이라이트 + 가는 방법 표시
-5. 스크롤 — 다른 식당으로 지도 이동
-6. 에러 상태 — 정류장 매핑 실패 시 경로 안내 생략
+<img src="flow1.PNG" width="300" />
+
+### 2. 식당 탐색 흐름 (스크롤 → 지도 이동 → 경로 안내)
+
+<video src="flow2.MP4" width="300" controls></video> <img src="flow3.png" width="300" />
+
+> 영상: 바텀시트 스크롤 시 식당 자동 선택, 지도 이동, 경로 하이라이트 변경
