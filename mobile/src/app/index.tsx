@@ -6,9 +6,13 @@ import {
   StyleSheet,
   FlatList,
   ActivityIndicator,
+  Pressable,
+  TextInput,
+  Keyboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import * as Location from "expo-location";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { useAction, useQuery } from "convex/react";
@@ -16,12 +20,6 @@ import { api } from "../../convex/_generated/api";
 import { colors, typography, spacing, radius } from "../lib/theme";
 import { Button, Header, RouteCard, RestaurantItem, RouteTypeTabs } from "../components";
 import type { RouteTypeTabKey } from "../components/RouteTypeTabs";
-
-// 고정된 출발지-도착지 (데모용)
-const DEMO_ORIGIN = { lat: 37.5665, lng: 126.978 }; // 서울시청
-const DEMO_DESTINATION = { lat: 37.4979, lng: 127.0276 }; // 강남역
-const DEMO_ORIGIN_NAME = "서울시청";
-const DEMO_DESTINATION_NAME = "강남역";
 
 type Route = {
   id: string;
@@ -57,7 +55,27 @@ type Restaurant = {
   routeProgress: number; // 경로 진행률 (0~1)
 };
 
+type PlaceSearchResult = {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+};
+
 export default function HomeScreen() {
+  const [originPlace, setOriginPlace] = useState<PlaceSearchResult | null>(null);
+  const [destinationPlace, setDestinationPlace] = useState<PlaceSearchResult | null>(null);
+  const [placeSearchTarget, setPlaceSearchTarget] = useState<"origin" | "destination" | null>(null);
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [placeResults, setPlaceResults] = useState<PlaceSearchResult[]>([]);
+  const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
+  const [placeSearchError, setPlaceSearchError] = useState(false);
+  const [placeSearchRetry, setPlaceSearchRetry] = useState(0);
+  const [isShowingRoutes, setIsShowingRoutes] = useState(false);
+  const [isGettingCurrentLocation, setIsGettingCurrentLocation] = useState(false);
+  const [currentLocationError, setCurrentLocationError] = useState<string | null>(null);
+  const placeSearchInputRef = useRef<TextInput>(null);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
@@ -122,6 +140,45 @@ export default function HomeScreen() {
 
   const getRoutes = useAction(api.routes.getRoutes);
   const getRestaurants = useAction(api.restaurants.getRestaurants);
+  const searchPlaces = useAction(api.places.searchPlaces);
+
+  useEffect(() => {
+    if (!placeSearchTarget) return;
+
+    const query = placeQuery.trim();
+    if (!query) {
+      setPlaceResults([]);
+      setPlaceSearchLoading(false);
+      setPlaceSearchError(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPlaceResults([]);
+    setPlaceSearchLoading(true);
+    setPlaceSearchError(false);
+
+    const timeout = setTimeout(() => {
+      searchPlaces({ query })
+        .then((results) => {
+          if (!cancelled) setPlaceResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setPlaceResults([]);
+            setPlaceSearchError(true);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setPlaceSearchLoading(false);
+        });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [placeSearchTarget, placeQuery, placeSearchRetry, searchPlaces]);
 
   const routeCounts = useMemo<Record<RouteTypeTabKey, number>>(() => {
     const counts: Record<RouteTypeTabKey, number> = {
@@ -310,13 +367,16 @@ export default function HomeScreen() {
 
   // 경로 로드
   const loadRoutes = useCallback(async () => {
+    if (!originPlace || !destinationPlace) return;
+
+    setIsShowingRoutes(true);
     setLoading("routes");
     setError(null);
     setSelectedRouteType("ALL");
     try {
       const result = await getRoutes({
-        origin: DEMO_ORIGIN,
-        destination: DEMO_DESTINATION,
+        origin: { lat: originPlace.lat, lng: originPlace.lng },
+        destination: { lat: destinationPlace.lat, lng: destinationPlace.lng },
       });
       setRoutes(result);
     } catch (e) {
@@ -324,7 +384,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(null);
     }
-  }, [getRoutes]);
+  }, [getRoutes, originPlace, destinationPlace]);
 
   // 경로 선택
   const [loadingRestaurants, setLoadingRestaurants] = useState(false);
@@ -386,31 +446,241 @@ export default function HomeScreen() {
   // 경로 선택 → 초기 화면
   const handleBackToIntro = useCallback(() => {
     setRoutes([]);
+    setSelectedRoute(null);
+    setError(null);
+    setIsShowingRoutes(false);
   }, []);
 
-  // 초기 로드
-  if (routes.length === 0 && !loading && !error) {
+  const handleUseCurrentLocation = useCallback(async () => {
+    setCurrentLocationError(null);
+    setIsGettingCurrentLocation(true);
+
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setCurrentLocationError(
+          permission.canAskAgain
+            ? "위치 권한을 허용하면 현재 위치를 출발지로 사용할 수 있어요."
+            : "기기 설정에서 위치 권한을 허용해 주세요. 장소를 직접 검색해도 돼요."
+        );
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const { latitude, longitude } = position.coords;
+      setOriginPlace({
+        id: "current-location",
+        name: "현재 위치",
+        address: "",
+        lat: latitude,
+        lng: longitude,
+      });
+    } catch {
+      setCurrentLocationError(
+        "현재 위치를 확인하지 못했어요. 위치 서비스를 확인하거나 장소를 직접 검색해 주세요."
+      );
+    } finally {
+      setIsGettingCurrentLocation(false);
+    }
+  }, []);
+
+  const openPlaceSearch = useCallback((target: "origin" | "destination") => {
+    const selectedPlace = target === "origin" ? originPlace : destinationPlace;
+    setPlaceSearchTarget(target);
+    setPlaceQuery(selectedPlace?.id === "current-location" ? "" : selectedPlace?.name ?? "");
+    setPlaceResults([]);
+    setPlaceSearchError(false);
+    if (target === "origin") setCurrentLocationError(null);
+  }, [originPlace, destinationPlace]);
+
+  const selectPlace = useCallback((place: PlaceSearchResult) => {
+    if (placeSearchTarget === "origin") {
+      setOriginPlace(place);
+    } else if (placeSearchTarget === "destination") {
+      setDestinationPlace(place);
+    }
+    Keyboard.dismiss();
+    setPlaceSearchTarget(null);
+    setPlaceQuery("");
+    setPlaceResults([]);
+  }, [placeSearchTarget]);
+
+  if (placeSearchTarget) {
+    const targetLabel = placeSearchTarget === "origin" ? "출발지" : "도착지";
+
     return (
-      <View style={styles.container}>
-        <Header />
-        <View style={styles.introContainer}>
-          <View style={styles.routeInfo}>
-            <Text style={styles.routeLabel}>출발</Text>
-            <Text style={styles.routeValue}>{DEMO_ORIGIN_NAME}</Text>
-          </View>
-          <View style={styles.routeInfo}>
-            <Text style={styles.routeLabel}>도착</Text>
-            <Text style={styles.routeValue}>{DEMO_DESTINATION_NAME}</Text>
-          </View>
-          <Text style={styles.demoNotice}>
-            * 데모용 고정 경로입니다
-          </Text>
-          <Button label="경로 찾기" onPress={loadRoutes} />
-          <Text style={styles.devNotice}>
-            이 화면은 추후 출발지/도착지 입력 화면으로 대체될 예정입니다.
-          </Text>
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+        <View style={styles.placeSearchHeader}>
+          <Pressable
+            onPress={() => {
+              Keyboard.dismiss();
+              setPlaceSearchTarget(null);
+            }}
+            style={styles.placeSearchBack}
+            accessibilityRole="button"
+            accessibilityLabel="장소 검색 닫기"
+          >
+            <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+          </Pressable>
+          <Text style={styles.placeSearchTitle}>{targetLabel} 검색</Text>
         </View>
-      </View>
+
+        <View style={styles.placeSearchInput}>
+          <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
+          <TextInput
+            ref={placeSearchInputRef}
+            value={placeQuery}
+            onChangeText={setPlaceQuery}
+            placeholder="장소명을 입력하세요"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.placeSearchTextInput}
+            autoFocus
+            selectTextOnFocus
+            autoCapitalize="none"
+            returnKeyType="search"
+            accessibilityLabel={`${targetLabel} 검색어`}
+          />
+          {placeSearchLoading && <ActivityIndicator size="small" color={colors.primary} />}
+          {placeQuery.length > 0 && (
+            <Pressable
+              onPress={() => {
+                setPlaceQuery("");
+                placeSearchInputRef.current?.focus();
+              }}
+              style={styles.placeSearchClearButton}
+              accessibilityRole="button"
+              accessibilityLabel="검색어 지우기"
+              hitSlop={8}
+            >
+              <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+            </Pressable>
+          )}
+        </View>
+
+        {placeSearchError ? (
+          <View style={styles.placeSearchMessage}>
+            <Text style={styles.placeSearchMessageText}>장소를 검색하지 못했어요. 다시 시도해 주세요.</Text>
+            <Pressable
+              onPress={() => setPlaceSearchRetry((value) => value + 1)}
+              style={styles.placeSearchRetry}
+              accessibilityRole="button"
+            >
+              <Text style={styles.placeSearchRetryText}>다시 검색</Text>
+            </Pressable>
+          </View>
+        ) : placeQuery.trim().length === 0 ? null : !placeSearchLoading && placeResults.length === 0 ? (
+          <Text style={styles.placeSearchHint}>검색 결과가 없어요. 다른 장소명을 입력해 보세요.</Text>
+        ) : (
+          <FlatList
+            data={placeResults}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.placeSearchResults}
+            ItemSeparatorComponent={() => <View style={styles.placeSearchSeparator} />}
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => selectPlace(item)}
+                style={styles.placeSearchResult}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.name}, ${item.address}`}
+              >
+                <Ionicons name="location-outline" size={20} color={colors.textSecondary} />
+                <View style={styles.placeSearchResultText}>
+                  <Text style={styles.placeSearchResultName}>{item.name}</Text>
+                  <Text style={styles.placeSearchResultAddress}>{item.address}</Text>
+                </View>
+              </Pressable>
+            )}
+          />
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  if (!isShowingRoutes && !selectedRoute) {
+    return (
+      <SafeAreaView style={styles.container} edges={["bottom"]}>
+        <Header />
+        <View style={styles.homeContent}>
+          <View style={styles.homeHeading}>
+            <Text style={styles.homeTitle}>가는 길에 맛있는 한 끼 어때요?</Text>
+            <Text style={styles.homeDescription}>
+              서울 대중교통 경로에서 중간에 들르기 좋은 식당을 찾아봐요.
+            </Text>
+          </View>
+
+          <View style={styles.locationForm}>
+            <View style={styles.locationGroup}>
+              <Text style={styles.locationLabel}>출발지</Text>
+              <Pressable
+                style={styles.locationField}
+                onPress={() => openPlaceSearch("origin")}
+                accessibilityRole="button"
+                accessibilityLabel="출발지 장소 검색"
+              >
+                <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
+                <View style={styles.locationValue}>
+                  <Text style={originPlace ? styles.locationSelectedName : styles.locationPlaceholder}>
+                    {originPlace?.name ?? "장소를 검색하세요"}
+                  </Text>
+                  {originPlace?.address ? <Text style={styles.locationSelectedAddress}>{originPlace.address}</Text> : null}
+                </View>
+              </Pressable>
+              <Pressable
+                style={styles.currentLocationAction}
+                onPress={handleUseCurrentLocation}
+                disabled={isGettingCurrentLocation}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isGettingCurrentLocation, busy: isGettingCurrentLocation }}
+              >
+                {isGettingCurrentLocation ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="locate-outline" size={18} color={colors.primary} />
+                )}
+                <Text style={styles.currentLocationText}>
+                  {isGettingCurrentLocation ? "현재 위치 확인 중..." : "현재 위치 사용"}
+                </Text>
+              </Pressable>
+              {currentLocationError && (
+                <Text style={styles.currentLocationError}>{currentLocationError}</Text>
+              )}
+            </View>
+
+            <View style={styles.locationGroup}>
+              <Text style={styles.locationLabel}>도착지</Text>
+              <Pressable
+                style={styles.locationField}
+                onPress={() => openPlaceSearch("destination")}
+                accessibilityRole="button"
+                accessibilityLabel="도착지 장소 검색"
+              >
+                <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
+                <View style={styles.locationValue}>
+                  <Text style={destinationPlace ? styles.locationSelectedName : styles.locationPlaceholder}>
+                    {destinationPlace?.name ?? "장소를 검색하세요"}
+                  </Text>
+                  {destinationPlace && <Text style={styles.locationSelectedAddress}>{destinationPlace.address}</Text>}
+                </View>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.homeFooter}>
+            <Pressable
+              style={[styles.homeSearchButton, (!originPlace || !destinationPlace) && styles.homeSearchButtonDisabled]}
+              onPress={loadRoutes}
+              disabled={!originPlace || !destinationPlace}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !originPlace || !destinationPlace }}
+            >
+              <Text style={styles.homeSearchButtonText}>경로 찾기</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -421,7 +691,7 @@ export default function HomeScreen() {
         <Header onBack={handleBackToIntro} />
         <View style={styles.screenHeader}>
           <Text style={styles.screenTitle}>
-            {DEMO_ORIGIN_NAME} → {DEMO_DESTINATION_NAME}
+            {originPlace?.name ?? "출발지"} → {destinationPlace?.name ?? "도착지"}
           </Text>
         </View>
 
@@ -475,6 +745,9 @@ export default function HomeScreen() {
     );
   }
 
+  const origin = originPlace!;
+  const destination = destinationPlace!;
+
   // 경로 상세 + 식당 목록 + 지도
   return (
     <View style={styles.mapContainer}>
@@ -483,8 +756,8 @@ export default function HomeScreen() {
         ref={mapRef}
         style={styles.map}
         initialRegion={{
-          latitude: DEMO_ORIGIN.lat,
-          longitude: DEMO_ORIGIN.lng,
+          latitude: origin.lat,
+          longitude: origin.lng,
           latitudeDelta: 0.1,
           longitudeDelta: 0.1,
         }}
@@ -493,7 +766,7 @@ export default function HomeScreen() {
         {selectedRoute.legs[0]?.polyline[0] && (
           <Polyline
             coordinates={[
-              { latitude: DEMO_ORIGIN.lat, longitude: DEMO_ORIGIN.lng },
+              { latitude: origin.lat, longitude: origin.lng },
               { latitude: selectedRoute.legs[0].polyline[0].lat, longitude: selectedRoute.legs[0].polyline[0].lng },
             ]}
             strokeColor="#888888"
@@ -538,7 +811,7 @@ export default function HomeScreen() {
               <Polyline
                 coordinates={[
                   { latitude: lastPoint.lat, longitude: lastPoint.lng },
-                  { latitude: DEMO_DESTINATION.lat, longitude: DEMO_DESTINATION.lng },
+                  { latitude: destination.lat, longitude: destination.lng },
                 ]}
                 strokeColor={isGrayed ? "#CCCCCC" : "#888888"}
                 strokeWidth={5}
@@ -616,12 +889,12 @@ export default function HomeScreen() {
 
         {/* 출발/도착 마커 */}
         <Marker
-          coordinate={{ latitude: DEMO_ORIGIN.lat, longitude: DEMO_ORIGIN.lng }}
+          coordinate={{ latitude: origin.lat, longitude: origin.lng }}
           title="출발"
           pinColor="green"
         />
         <Marker
-          coordinate={{ latitude: DEMO_DESTINATION.lat, longitude: DEMO_DESTINATION.lng }}
+          coordinate={{ latitude: destination.lat, longitude: destination.lng }}
           title="도착"
           pinColor={selectedRestaurant && stopLegIndex >= 0 ? "gray" : "red"}
         />
@@ -758,7 +1031,7 @@ export default function HomeScreen() {
                               <View style={[styles.routeStepIcon, styles.routeStepIconOrigin]}>
                                 <Ionicons name="location" size={16} color="#FFFFFF" />
                               </View>
-                              <Text style={styles.routeStepText}>출발: {DEMO_ORIGIN_NAME}</Text>
+                              <Text style={styles.routeStepText}>출발: {origin.name}</Text>
                             </View>
 
                             {selectedRoute.legs.map((leg, index) => {
@@ -837,38 +1110,197 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  introContainer: {
+  homeContent: {
     flex: 1,
     padding: spacing.xl,
-    justifyContent: "center",
+    paddingTop: spacing.xxl,
   },
-  routeInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.md,
+  homeHeading: {
+    marginBottom: spacing.xxl,
   },
-  routeLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    width: 40,
-  },
-  routeValue: {
-    ...typography.subtitle,
+  homeTitle: {
+    ...typography.title,
     color: colors.textPrimary,
   },
-  demoNotice: {
-    ...typography.small,
+  homeDescription: {
+    ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.lg,
-    marginBottom: spacing.xl,
-    textAlign: "center",
+    marginTop: spacing.sm,
   },
-  devNotice: {
+  locationForm: {
+    gap: spacing.xl,
+  },
+  locationGroup: {
+    gap: spacing.sm,
+  },
+  locationLabel: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: "600",
+  },
+  locationField: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  locationValue: {
+    flex: 1,
+    paddingVertical: spacing.md,
+  },
+  locationPlaceholder: {
+    ...typography.body,
+    color: colors.textSecondary,
+  },
+  locationSelectedName: {
+    ...typography.body,
+    color: colors.textPrimary,
+    fontWeight: "600",
+  },
+  locationSelectedAddress: {
     ...typography.small,
     color: colors.textSecondary,
-    marginTop: spacing.xxl,
-    textAlign: "center",
-    fontStyle: "italic",
+    marginTop: spacing.xs,
+  },
+  currentLocationAction: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  currentLocationText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "600",
+  },
+  currentLocationError: {
+    ...typography.small,
+    color: colors.error,
+  },
+  homeFooter: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingBottom: spacing.lg,
+  },
+  homeSearchButton: {
+    minHeight: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+  },
+  homeSearchButtonDisabled: {
+    opacity: 0.45,
+  },
+  homeSearchButtonText: {
+    ...typography.body,
+    color: colors.surface,
+    fontWeight: "700",
+  },
+  placeSearchHeader: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+  },
+  placeSearchBack: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeSearchTitle: {
+    ...typography.subtitle,
+    color: colors.textPrimary,
+    marginLeft: spacing.sm,
+  },
+  placeSearchInput: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  placeSearchTextInput: {
+    flex: 1,
+    height: "100%",
+    fontSize: typography.body.fontSize,
+    fontWeight: "400",
+    paddingVertical: 0,
+    color: colors.textPrimary,
+  },
+  placeSearchClearButton: {
+    width: 32,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeSearchHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+  },
+  placeSearchMessage: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    gap: spacing.md,
+  },
+  placeSearchMessageText: {
+    ...typography.caption,
+    color: colors.error,
+  },
+  placeSearchRetry: {
+    alignSelf: "flex-start",
+    paddingVertical: spacing.sm,
+  },
+  placeSearchRetryText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "600",
+  },
+  placeSearchResults: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  placeSearchSeparator: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginLeft: 36,
+  },
+  placeSearchResult: {
+    minHeight: 68,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  placeSearchResultText: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  placeSearchResultName: {
+    ...typography.body,
+    color: colors.textPrimary,
+    fontWeight: "600",
+  },
+  placeSearchResultAddress: {
+    ...typography.small,
+    color: colors.textSecondary,
   },
   screenHeader: {
     padding: spacing.lg,
