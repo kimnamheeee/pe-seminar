@@ -9,6 +9,7 @@ import {
   Pressable,
   TextInput,
   Keyboard,
+  type TextInputInstance,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -75,7 +76,7 @@ export default function HomeScreen() {
   const [isShowingRoutes, setIsShowingRoutes] = useState(false);
   const [isGettingCurrentLocation, setIsGettingCurrentLocation] = useState(false);
   const [currentLocationError, setCurrentLocationError] = useState<string | null>(null);
-  const placeSearchInputRef = useRef<TextInput>(null);
+  const placeSearchInputRef = useRef<TextInputInstance>(null);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
@@ -507,6 +508,13 @@ export default function HomeScreen() {
     setPlaceResults([]);
   }, [placeSearchTarget]);
 
+  const handleSwapLocations = useCallback(() => {
+    if (!originPlace && !destinationPlace) return;
+    setOriginPlace(destinationPlace);
+    setDestinationPlace(originPlace);
+    setCurrentLocationError(null);
+  }, [originPlace, destinationPlace]);
+
   if (placeSearchTarget) {
     const targetLabel = placeSearchTarget === "origin" ? "출발지" : "도착지";
 
@@ -607,7 +615,7 @@ export default function HomeScreen() {
           <View style={styles.homeHeading}>
             <Text style={styles.homeTitle}>가는 길에 맛있는 한 끼 어때요?</Text>
             <Text style={styles.homeDescription}>
-              서울 대중교통 경로에서 중간에 들르기 좋은 식당을 찾아봐요.
+              서울에서 버스나 지하철 타고 가는 길에 들를 식당을 찾아봐요.
             </Text>
           </View>
 
@@ -622,28 +630,49 @@ export default function HomeScreen() {
               >
                 <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
                 <View style={styles.locationValue}>
-                  <Text style={originPlace ? styles.locationSelectedName : styles.locationPlaceholder}>
+                  <Text
+                    numberOfLines={1}
+                    style={originPlace ? styles.locationSelectedName : styles.locationPlaceholder}
+                  >
                     {originPlace?.name ?? "장소를 검색하세요"}
                   </Text>
-                  {originPlace?.address ? <Text style={styles.locationSelectedAddress}>{originPlace.address}</Text> : null}
+                  {originPlace?.address ? (
+                    <Text numberOfLines={1} style={styles.locationSelectedAddress}>{originPlace.address}</Text>
+                  ) : null}
                 </View>
               </Pressable>
-              <Pressable
-                style={styles.currentLocationAction}
-                onPress={handleUseCurrentLocation}
-                disabled={isGettingCurrentLocation}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: isGettingCurrentLocation, busy: isGettingCurrentLocation }}
-              >
-                {isGettingCurrentLocation ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <Ionicons name="locate-outline" size={18} color={colors.primary} />
-                )}
-                <Text style={styles.currentLocationText}>
-                  {isGettingCurrentLocation ? "현재 위치 확인 중..." : "현재 위치 사용"}
-                </Text>
-              </Pressable>
+              <View style={styles.locationActionsRow}>
+                <Pressable
+                  style={styles.currentLocationAction}
+                  onPress={handleUseCurrentLocation}
+                  disabled={isGettingCurrentLocation}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: isGettingCurrentLocation, busy: isGettingCurrentLocation }}
+                >
+                  {isGettingCurrentLocation ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name="locate-outline" size={18} color={colors.primary} />
+                  )}
+                  <Text style={styles.currentLocationText}>
+                    {isGettingCurrentLocation ? "현재 위치 확인 중..." : "현재 위치 사용"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.locationSwapButton,
+                    ((!originPlace && !destinationPlace) || isGettingCurrentLocation) && styles.locationSwapButtonDisabled,
+                  ]}
+                  onPress={handleSwapLocations}
+                  disabled={(!originPlace && !destinationPlace) || isGettingCurrentLocation}
+                  accessibilityRole="button"
+                  accessibilityLabel="출발지와 도착지 바꾸기"
+                  accessibilityState={{ disabled: (!originPlace && !destinationPlace) || isGettingCurrentLocation }}
+                >
+                  <Ionicons name="swap-vertical-outline" size={18} color={colors.primary} />
+                  <Text style={styles.locationSwapButtonText}>출발지·도착지 바꾸기</Text>
+                </Pressable>
+              </View>
               {currentLocationError && (
                 <Text style={styles.currentLocationError}>{currentLocationError}</Text>
               )}
@@ -659,10 +688,15 @@ export default function HomeScreen() {
               >
                 <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
                 <View style={styles.locationValue}>
-                  <Text style={destinationPlace ? styles.locationSelectedName : styles.locationPlaceholder}>
+                  <Text
+                    numberOfLines={1}
+                    style={destinationPlace ? styles.locationSelectedName : styles.locationPlaceholder}
+                  >
                     {destinationPlace?.name ?? "장소를 검색하세요"}
                   </Text>
-                  {destinationPlace && <Text style={styles.locationSelectedAddress}>{destinationPlace.address}</Text>}
+                  {destinationPlace?.address ? (
+                    <Text numberOfLines={1} style={styles.locationSelectedAddress}>{destinationPlace.address}</Text>
+                  ) : null}
                 </View>
               </Pressable>
             </View>
@@ -1139,7 +1173,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   locationField: {
-    minHeight: 56,
+    height: 64,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
@@ -1151,7 +1185,7 @@ const styles = StyleSheet.create({
   },
   locationValue: {
     flex: 1,
-    paddingVertical: spacing.md,
+    justifyContent: "center",
   },
   locationPlaceholder: {
     ...typography.body,
@@ -1183,6 +1217,28 @@ const styles = StyleSheet.create({
   currentLocationError: {
     ...typography.small,
     color: colors.error,
+  },
+  locationActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  locationSwapButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  locationSwapButtonDisabled: {
+    opacity: 0.4,
+  },
+  locationSwapButtonText: {
+    ...typography.small,
+    color: colors.primary,
+    fontWeight: "600",
   },
   homeFooter: {
     flex: 1,
