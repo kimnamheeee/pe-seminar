@@ -261,7 +261,10 @@ export const getNearestStopsForRestaurants = query({
 });
 
 function normalizeName(name: string, mode?: "BUS" | "SUBWAY"): string {
-  const normalized = name
+  const withoutSubwayAlias = mode === "SUBWAY"
+    ? name.replace(/\([^)]*\)/g, "")
+    : name;
+  const normalized = withoutSubwayAlias
     .replace(/\s+/g, "")
     .toLowerCase()
     .replace(/[^\w가-힣]/g, "");

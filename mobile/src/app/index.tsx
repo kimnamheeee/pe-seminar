@@ -15,7 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
-import { useAction, useQuery } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { appFontFamily, colors, typography, spacing, radius } from "../lib/theme";
 import { Button, Header, RouteCard, RestaurantItem, RouteTypeTabs, Text } from "../components";
@@ -55,6 +55,48 @@ type Restaurant = {
   routeProgress: number; // 경로 진행률 (0~1)
 };
 
+type RestaurantStopInfo = {
+  found: boolean;
+  stop?: {
+    mode: "BUS" | "SUBWAY";
+    name: string;
+    lat: number;
+    lng: number;
+    distanceFromRestaurant: number;
+    distanceFromRoute: number;
+  };
+  stopLegIndex?: number;
+};
+
+function getLegEndProgress(route: Route): number[] {
+  let totalLength = 0;
+  const legLengths = route.legs.map((leg) => {
+    let length = 0;
+    for (let i = 1; i < leg.polyline.length; i++) {
+      const p1 = leg.polyline[i - 1];
+      const p2 = leg.polyline[i];
+      length += Math.sqrt(Math.pow((p2.lat - p1.lat) * 111000, 2) + Math.pow((p2.lng - p1.lng) * 88000, 2));
+    }
+    totalLength += length;
+    return length;
+  });
+  let accumulated = 0;
+  return legLengths.map((length) => {
+    accumulated += length;
+    return totalLength > 0 ? accumulated / totalLength : 0;
+  });
+}
+
+function buildStopMatchingLegs(route: Route) {
+  const endProgress = getLegEndProgress(route);
+  return route.legs.map((leg, index) => ({
+    type: leg.type,
+    startProgress: index === 0 ? 0 : (endProgress[index - 1] || 0),
+    polyline: leg.polyline,
+    stations: (leg.stations || []).map((station) => ({ name: station.name })),
+  }));
+}
+
 type PlaceSearchResult = {
   id: string;
   name: string;
@@ -83,6 +125,8 @@ export default function HomeScreen() {
   const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [restaurantStops, setRestaurantStops] = useState<Record<string, RestaurantStopInfo>>({});
+  const [alightingLimitedReason, setAlightingLimitedReason] = useState<"OUTSIDE_SEOUL" | null>(null);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState<"routes" | "restaurants" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,7 +186,7 @@ export default function HomeScreen() {
   }, [selectedRestaurant]);
 
   const getRoutes = useAction(api.routes.getRoutesWithStatus);
-  const getRestaurants = useAction(api.restaurants.getRestaurants);
+  const getRestaurantsWithStops = useAction(api.restaurants.getRestaurantsWithStops);
   const searchPlaces = useAction(api.places.searchPlaces);
 
   useEffect(() => {
@@ -234,67 +278,9 @@ export default function HomeScreen() {
     }
   }, [restaurants]);
 
-  // 각 leg의 경로 진행률 계산
-  const legProgressRanges = useMemo(() => {
-    if (!selectedRoute) return [];
-
-    let totalLength = 0;
-    const legLengths: number[] = [];
-
-    for (const leg of selectedRoute.legs) {
-      let legLength = 0;
-      for (let i = 1; i < leg.polyline.length; i++) {
-        const p1 = leg.polyline[i - 1];
-        const p2 = leg.polyline[i];
-        legLength += Math.sqrt(
-          Math.pow((p2.lat - p1.lat) * 111000, 2) +
-          Math.pow((p2.lng - p1.lng) * 88000, 2)
-        );
-      }
-      legLengths.push(legLength);
-      totalLength += legLength;
-    }
-
-    // 각 leg의 끝 진행률 계산
-    const ranges: number[] = [];
-    let accumulated = 0;
-    for (const len of legLengths) {
-      accumulated += len;
-      ranges.push(totalLength > 0 ? accumulated / totalLength : 0);
-    }
-    return ranges;
-  }, [selectedRoute]);
-
-  // 모든 식당에 대한 하차 정류장 일괄 조회
-  const nearestStopsArgs = useMemo(() => {
-    if (!selectedRoute || restaurants.length === 0) return "skip" as const;
-
-    return {
-      restaurants: restaurants.map((r) => ({
-        id: r.id,
-        lat: r.lat,
-        lng: r.lng,
-        routeProgress: r.routeProgress,
-      })),
-      legs: selectedRoute.legs.map((leg, index) => ({
-        type: leg.type,
-        startProgress: index === 0 ? 0 : (legProgressRanges[index - 1] || 0),
-        polyline: leg.polyline,
-        stations: (leg.stations || []).map((s) => ({ name: s.name })),
-      })),
-    };
-  }, [selectedRoute, restaurants, legProgressRanges]);
-
-  const nearestStopsData = useQuery(
-    api.transitStops.getNearestStopsForRestaurants,
-    nearestStopsArgs
-  );
-
-  // 특정 식당의 정류장 정보 가져오기
   const getStopInfoForRestaurant = useCallback((restaurantId: string) => {
-    if (!nearestStopsData) return null;
-    return nearestStopsData[restaurantId] || null;
-  }, [nearestStopsData]);
+    return restaurantStops[restaurantId] || null;
+  }, [restaurantStops]);
 
   // 선택된 식당의 정류장 정보 (지도 하이라이팅용)
   const selectedStopInfo = selectedRestaurant ? getStopInfoForRestaurant(selectedRestaurant.id) : null;
@@ -425,22 +411,30 @@ export default function HomeScreen() {
     async (route: Route) => {
       setSelectedRoute(route);
       setSelectedRestaurant(null);
+      setRestaurants([]);
+      setRestaurantStops({});
+      setAlightingLimitedReason(null);
       setLoadingRestaurants(true);
       setError(null);
 
       try {
-        const result = await getRestaurants({
+        const result = await getRestaurantsWithStops({
           routeCoords: route.polyline,
+          legs: buildStopMatchingLegs(route),
         });
-        setRestaurants(result);
+        setRestaurants(result.restaurants);
+        setRestaurantStops(result.stops);
+        setAlightingLimitedReason(result.alightingLimitedReason);
       } catch (e) {
         setError("식당 목록을 불러오지 못했습니다.");
         setRestaurants([]);
+        setRestaurantStops({});
+        setAlightingLimitedReason(null);
       } finally {
         setLoadingRestaurants(false);
       }
     },
-    [getRestaurants]
+    [getRestaurantsWithStops]
   );
 
   // 식당 선택
@@ -872,6 +866,14 @@ export default function HomeScreen() {
   return (
     <View style={styles.mapContainer}>
       <Header onBack={handleBackToRoutes} />
+      {alightingLimitedReason === "OUTSIDE_SEOUL" && (
+        <View style={styles.alightingLimitBanner}>
+          <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
+          <Text style={styles.alightingLimitText}>
+            이 경로는 서울 경계를 벗어나 하차 안내를 제공하지 않아요. 경로와 식당은 계속 볼 수 있어요.
+          </Text>
+        </View>
+      )}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -1135,7 +1137,11 @@ export default function HomeScreen() {
                                 {itemStopInfo.stop.name}
                               </Text>
                             ) : (
-                              <Text style={styles.stopSummaryText}>하차 정보를 찾지 못했어요</Text>
+                              <Text style={styles.stopSummaryText}>
+                                {alightingLimitedReason === "OUTSIDE_SEOUL"
+                                  ? "서울 경계 밖 경로라 하차 안내를 제공하지 않아요"
+                                  : "하차 정보를 찾지 못했어요"}
+                              </Text>
                             )}
                             {itemStopInfo.found && itemStopInfo.stop && (
                               <Text style={styles.stopSummaryDistance}>
@@ -1154,7 +1160,16 @@ export default function HomeScreen() {
                               <Text style={styles.routeStepText}>출발: {origin.name}</Text>
                             </View>
 
-                            {selectedRoute.legs.map((leg, index) => {
+                            {alightingLimitedReason === "OUTSIDE_SEOUL" ? (
+                              <View style={styles.routeStep}>
+                                <View style={[styles.routeStepIcon, styles.routeStepIconWalk]}>
+                                  <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+                                </View>
+                                <Text style={styles.routeStepText}>
+                                  서울 경계 밖 경로라 하차 안내를 제공하지 않아요.
+                                </Text>
+                              </View>
+                            ) : selectedRoute.legs.map((leg, index) => {
                               if (itemStopLegIndex >= 0 && index > itemStopLegIndex) return null;
                               if (leg.type === "WALK" || !leg.vehicleInfo) return null;
 
@@ -1454,6 +1469,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
+  },
+  alightingLimitBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.primaryLight,
+  },
+  alightingLimitText: {
+    ...typography.small,
+    color: colors.textPrimary,
+    flex: 1,
   },
   routeEndpoints: {
     flexDirection: "column",
