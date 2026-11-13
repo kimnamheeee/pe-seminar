@@ -59,6 +59,7 @@ export const getNearestStopsForRestaurants = query({
       v.object({
         type: v.string(),
         startProgress: v.number(),
+        polyline: v.array(v.object({ lat: v.number(), lng: v.number() })),
         stations: v.array(
           v.object({
             name: v.string(),
@@ -78,36 +79,62 @@ export const getNearestStopsForRestaurants = query({
       }
     }
 
-    const stationCoords = new Map<string, { lat: number; lng: number }>();
+    const stationCoords = new Map<string, Array<{ lat: number; lng: number }>>();
     for (const normalizedName of stationNameSet) {
       const candidates = await ctx.db
         .query("busStops")
         .withIndex("by_normalizedName", (q) => q.eq("normalizedName", normalizedName))
         .collect();
       if (candidates.length > 0) {
-        // 첫 번째 후보 사용 (이름 중복 시 더 정확한 매칭 필요할 수 있음)
-        stationCoords.set(normalizedName, { lat: candidates[0].lat, lng: candidates[0].lng });
+        stationCoords.set(
+          normalizedName,
+          candidates.map(({ lat, lng }) => ({ lat, lng }))
+        );
       }
     }
 
     // 각 식당에 대해 가장 가까운 정류장 계산
     const results: Record<string, {
       found: boolean;
-      stop?: { name: string; lat: number; lng: number; distanceFromRestaurant: number };
+      stop?: { name: string; lat: number; lng: number; distanceFromRestaurant: number; distanceFromRoute: number };
       stopLegIndex?: number;
     }> = {};
 
     for (const restaurant of args.restaurants) {
       // 이 식당 이전에 시작하는 버스 구간의 정류장만 고려
-      const relevantStations: Array<{ name: string; lat: number; lng: number; legIndex: number }> = [];
+      const relevantStations: Array<{
+        name: string;
+        lat: number;
+        lng: number;
+        legIndex: number;
+        distanceFromRoute: number;
+      }> = [];
 
       for (let i = 0; i < args.legs.length; i++) {
         const leg = args.legs[i];
         if (leg.type === "BUS" && leg.startProgress <= restaurant.routeProgress) {
-          for (const station of leg.stations) {
-            const coords = stationCoords.get(normalizeName(station.name));
-            if (coords) {
-              relevantStations.push({ name: station.name, ...coords, legIndex: i });
+          if (leg.polyline.length >= 2) {
+            for (const station of leg.stations) {
+              const candidates = stationCoords.get(normalizeName(station.name));
+              if (candidates) {
+                let nearestCandidate: { lat: number; lng: number } | null = null;
+                let nearestDistance = Infinity;
+                for (const candidate of candidates) {
+                  const distance = distanceFromPolyline(candidate, leg.polyline);
+                  if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestCandidate = candidate;
+                  }
+                }
+                if (nearestCandidate) {
+                  relevantStations.push({
+                    name: station.name,
+                    ...nearestCandidate,
+                    legIndex: i,
+                    distanceFromRoute: nearestDistance,
+                  });
+                }
+              }
             }
           }
         }
@@ -143,6 +170,7 @@ export const getNearestStopsForRestaurants = query({
           lat: nearestStation.lat,
           lng: nearestStation.lng,
           distanceFromRestaurant: Math.round(minDistance),
+          distanceFromRoute: Math.round(nearestStation.distanceFromRoute),
         },
         stopLegIndex: nearestStation.legIndex,
       };
@@ -268,4 +296,39 @@ function haversineDistance(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c;
+}
+
+// 정류소 후보 점에서 경로 폴리라인의 가장 가까운 선분까지의 거리 (미터)
+function distanceFromPolyline(
+  point: { lat: number; lng: number },
+  polyline: Array<{ lat: number; lng: number }>
+): number {
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng = 111_320 * Math.cos((point.lat * Math.PI) / 180);
+  let minDistance = Infinity;
+
+  for (let i = 1; i < polyline.length; i++) {
+    const start = {
+      x: (polyline[i - 1].lng - point.lng) * metersPerDegreeLng,
+      y: (polyline[i - 1].lat - point.lat) * metersPerDegreeLat,
+    };
+    const end = {
+      x: (polyline[i].lng - point.lng) * metersPerDegreeLng,
+      y: (polyline[i].lat - point.lat) * metersPerDegreeLat,
+    };
+    const segmentX = end.x - start.x;
+    const segmentY = end.y - start.y;
+    const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+    const projection = segmentLengthSquared === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, -(start.x * segmentX + start.y * segmentY) / segmentLengthSquared)
+        );
+    const dx = start.x + projection * segmentX;
+    const dy = start.y + projection * segmentY;
+    minDistance = Math.min(minDistance, Math.sqrt(dx * dx + dy * dy));
+  }
+
+  return minDistance;
 }

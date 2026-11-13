@@ -183,6 +183,7 @@ export default function HomeScreen() {
       legs: selectedRoute.legs.map((leg, index) => ({
         type: leg.type,
         startProgress: index === 0 ? 0 : (legProgressRanges[index - 1] || 0),
+        polyline: leg.polyline,
         stations: (leg.stations || []).map((s) => ({
           name: s.name,
           lat: s.lat,
@@ -618,8 +619,13 @@ export default function HomeScreen() {
               longitude: selectedStopInfo.stop.lng,
             }}
             title={`하차: ${selectedStopInfo.stop.name}`}
-            pinColor="blue"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={styles.alightStopMarker}>
+              <Ionicons name="bus" size={14} color="#FFFFFF" />
+              <Text style={styles.alightStopMarkerText}>하차</Text>
+            </View>
+          </Marker>
         )}
       </MapView>
 
@@ -676,7 +682,7 @@ export default function HomeScreen() {
                     selected={isSelected}
                     onPress={() => handleRestaurantSelect(item)}
                   />
-                  {/* 모든 식당에 경로 안내 표시 */}
+                  {/* 후보 비교 중에는 하차 지점만 요약하고, 선택한 식당에만 상세 안내를 펼친다. */}
                   {(() => {
                     const itemStopInfo = getStopInfoForRestaurant(item.id);
                     if (!itemStopInfo) return null;
@@ -684,58 +690,79 @@ export default function HomeScreen() {
                     const itemStopLegIndex = itemStopInfo.stopLegIndex ?? -1;
 
                     return (
-                      <View style={[styles.routeGuideSection, isSelected && styles.routeGuideSectionSelected]}>
-                        <Text style={styles.routeGuideTitle}>가는 방법</Text>
-
-                        <View style={styles.routeStep}>
-                          <View style={[styles.routeStepIcon, styles.routeStepIconOrigin]}>
-                            <Ionicons name="location" size={16} color="#FFFFFF" />
-                          </View>
-                          <Text style={styles.routeStepText}>출발: {DEMO_ORIGIN_NAME}</Text>
-                        </View>
-
-                        {selectedRoute.legs.map((leg, index) => {
-                          if (itemStopLegIndex >= 0 && index > itemStopLegIndex) return null;
-                          if (leg.type !== "BUS" || !leg.busInfo) return null;
-
-                          const isStopLeg = index === itemStopLegIndex;
-                          const alightStop = isStopLeg && itemStopInfo.found && itemStopInfo.stop
-                            ? itemStopInfo.stop.name
-                            : leg.endName;
-
-                          if (leg.startName === alightStop) return null;
-
-                          return (
-                            <View key={index} style={styles.routeStep}>
-                              <View style={styles.routeStepIcon}>
-                                <Ionicons name="bus" size={16} color={colors.primary} />
-                              </View>
-                              <Text style={styles.routeStepText}>
-                                <Text style={styles.routeStepBus}>{leg.busInfo.busNo}</Text>
-                                {" "}{leg.startName} → {alightStop}
+                      <>
+                        {!isSelected && (
+                          <View style={styles.stopSummary}>
+                            <Ionicons name="bus-outline" size={16} color={colors.primary} />
+                            {itemStopInfo.found && itemStopInfo.stop ? (
+                              <Text style={styles.stopSummaryText} numberOfLines={1}>
+                                <Text style={styles.stopSummaryEmphasis}>하차 </Text>
+                                {itemStopInfo.stop.name}
                               </Text>
-                            </View>
-                          );
-                        })}
-
-                        {itemStopInfo.found && itemStopInfo.stop && (
-                          <View style={styles.routeStep}>
-                            <View style={[styles.routeStepIcon, styles.routeStepIconWalk]}>
-                              <Ionicons name="walk" size={16} color={colors.textSecondary} />
-                            </View>
-                            <Text style={styles.routeStepText}>
-                              도보 {itemStopInfo.stop.distanceFromRestaurant}m
-                            </Text>
+                            ) : (
+                              <Text style={styles.stopSummaryText}>하차 정류장을 찾지 못했어요</Text>
+                            )}
+                            {itemStopInfo.found && itemStopInfo.stop && (
+                              <Text style={styles.stopSummaryDistance}>
+                                직선 {itemStopInfo.stop.distanceFromRestaurant}m
+                              </Text>
+                            )}
                           </View>
                         )}
 
-                        <View style={styles.routeStep}>
-                          <View style={[styles.routeStepIcon, styles.routeStepIconDestination]}>
-                            <Ionicons name="restaurant" size={16} color="#FFFFFF" />
+                        {isSelected && (
+                          <View style={styles.routeGuideSection}>
+                            <View style={styles.routeStep}>
+                              <View style={[styles.routeStepIcon, styles.routeStepIconOrigin]}>
+                                <Ionicons name="location" size={16} color="#FFFFFF" />
+                              </View>
+                              <Text style={styles.routeStepText}>출발: {DEMO_ORIGIN_NAME}</Text>
+                            </View>
+
+                            {selectedRoute.legs.map((leg, index) => {
+                              if (itemStopLegIndex >= 0 && index > itemStopLegIndex) return null;
+                              if (leg.type !== "BUS" || !leg.busInfo) return null;
+
+                              const isStopLeg = index === itemStopLegIndex;
+                              const alightStop = isStopLeg && itemStopInfo.found && itemStopInfo.stop
+                                ? itemStopInfo.stop.name
+                                : leg.endName;
+
+                              if (leg.startName === alightStop) return null;
+
+                              return (
+                                <View key={index} style={styles.routeStep}>
+                                  <View style={styles.routeStepIcon}>
+                                    <Ionicons name="bus" size={16} color={colors.primary} />
+                                  </View>
+                                  <Text style={styles.routeStepText}>
+                                    <Text style={styles.routeStepBus}>{leg.busInfo.busNo}</Text>
+                                    {" "}{leg.startName} → {alightStop}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+
+                            {itemStopInfo.found && itemStopInfo.stop && (
+                              <View style={styles.routeStep}>
+                                <View style={[styles.routeStepIcon, styles.routeStepIconWalk]}>
+                                  <Ionicons name="navigate-outline" size={16} color={colors.textSecondary} />
+                                </View>
+                                <Text style={styles.routeStepText}>
+                                  식당까지 직선거리 {itemStopInfo.stop.distanceFromRestaurant}m
+                                </Text>
+                              </View>
+                            )}
+
+                            <View style={styles.routeStep}>
+                              <View style={[styles.routeStepIcon, styles.routeStepIconDestination]}>
+                                <Ionicons name="restaurant" size={16} color="#FFFFFF" />
+                              </View>
+                              <Text style={styles.routeStepText}>도착: {item.name}</Text>
+                            </View>
                           </View>
-                          <Text style={styles.routeStepText}>도착: {item.name}</Text>
-                        </View>
-                      </View>
+                        )}
+                      </>
                     );
                   })()}
                 </View>
@@ -945,6 +972,47 @@ const styles = StyleSheet.create({
   },
   routeGuideSectionSelected: {
     backgroundColor: colors.primaryLight,
+  },
+  stopSummary: {
+    minHeight: 40,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.background,
+  },
+  stopSummaryText: {
+    ...typography.small,
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  stopSummaryEmphasis: {
+    color: colors.primary,
+    fontWeight: "700",
+  },
+  stopSummaryDistance: {
+    ...typography.small,
+    color: colors.textSecondary,
+  },
+  alightStopMarker: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.surface,
+    backgroundColor: colors.primary,
+    elevation: 4,
+  },
+  alightStopMarkerText: {
+    ...typography.small,
+    color: colors.surface,
+    fontWeight: "700",
   },
   routeGuideTitle: {
     ...typography.caption,
