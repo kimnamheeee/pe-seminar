@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { Dimensions } from "react-native";
 import {
   View,
-  Text,
   StyleSheet,
   FlatList,
   ActivityIndicator,
@@ -18,8 +17,8 @@ import MapView, { Marker, Polyline } from "react-native-maps";
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { colors, typography, spacing, radius } from "../lib/theme";
-import { Button, Header, RouteCard, RestaurantItem, RouteTypeTabs } from "../components";
+import { appFontFamily, colors, typography, spacing, radius } from "../lib/theme";
+import { Button, Header, RouteCard, RestaurantItem, RouteTypeTabs, Text } from "../components";
 import type { RouteTypeTabKey } from "../components/RouteTypeTabs";
 
 type Route = {
@@ -1168,9 +1167,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   locationLabel: {
-    ...typography.caption,
+    fontSize: 16,
+    lineHeight: 22,
     color: colors.textPrimary,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   locationField: {
     height: 64,
@@ -1293,6 +1293,7 @@ const styles = StyleSheet.create({
   placeSearchTextInput: {
     flex: 1,
     height: "100%",
+    fontFamily: appFontFamily,
     fontSize: typography.body.fontSize,
     fontWeight: "400",
     paddingVertical: 0,

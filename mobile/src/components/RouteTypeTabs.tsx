@@ -1,4 +1,5 @@
-import { ScrollView, Pressable, StyleSheet, Text, View } from "react-native";
+import { ScrollView, Pressable, StyleSheet, View } from "react-native";
+import { AppText as Text } from "./AppText";
 import { colors, spacing, typography } from "../lib/theme";
 
 export type RouteTypeTabKey = "ALL" | "BUS" | "SUBWAY" | "BUS_AND_SUBWAY";

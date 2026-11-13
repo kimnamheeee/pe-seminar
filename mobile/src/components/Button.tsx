@@ -1,11 +1,11 @@
 import {
   Pressable,
-  Text,
   StyleSheet,
   ActivityIndicator,
   ViewStyle,
   TextStyle,
 } from "react-native";
+import { AppText as Text } from "./AppText";
 import { colors, typography, spacing, radius } from "../lib/theme";
 
 type ButtonVariant = "primary" | "secondary" | "text";

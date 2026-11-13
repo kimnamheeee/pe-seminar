@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, StyleSheet, Pressable } from "react-native";
+import { AppText as Text } from "./AppText";
 import { colors, typography, spacing, radius } from "../lib/theme";
 
 interface LegInfo {

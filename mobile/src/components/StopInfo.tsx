@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
+import { AppText as Text } from "./AppText";
 import { colors, typography, spacing, radius } from "../lib/theme";
 
 interface StopInfoProps {
