@@ -14,7 +14,8 @@ import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { colors, typography, spacing, radius } from "../lib/theme";
-import { Button, Header, RouteCard, RestaurantItem } from "../components";
+import { Button, Header, RouteCard, RestaurantItem, RouteTypeTabs } from "../components";
+import type { RouteTypeTabKey } from "../components/RouteTypeTabs";
 
 // 고정된 출발지-도착지 (데모용)
 const DEMO_ORIGIN = { lat: 37.5665, lng: 126.978 }; // 서울시청
@@ -58,6 +59,7 @@ type Restaurant = {
 
 export default function HomeScreen() {
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
@@ -120,6 +122,28 @@ export default function HomeScreen() {
 
   const getRoutes = useAction(api.routes.getRoutes);
   const getRestaurants = useAction(api.restaurants.getRestaurants);
+
+  const routeCounts = useMemo<Record<RouteTypeTabKey, number>>(() => {
+    const counts: Record<RouteTypeTabKey, number> = {
+      ALL: routes.length,
+      BUS: 0,
+      SUBWAY: 0,
+      BUS_AND_SUBWAY: 0,
+    };
+
+    for (const route of routes) {
+      counts[route.routeType] += 1;
+    }
+
+    return counts;
+  }, [routes]);
+
+  const visibleRoutes = useMemo(
+    () => selectedRouteType === "ALL"
+      ? routes
+      : routes.filter((route) => route.routeType === selectedRouteType),
+    [routes, selectedRouteType]
+  );
 
   // 지도 영역 조정 (바텀시트 50% 높이 고려)
   const screenHeight = Dimensions.get("window").height;
@@ -288,6 +312,7 @@ export default function HomeScreen() {
   const loadRoutes = useCallback(async () => {
     setLoading("routes");
     setError(null);
+    setSelectedRouteType("ALL");
     try {
       const result = await getRoutes({
         origin: DEMO_ORIGIN,
@@ -398,7 +423,6 @@ export default function HomeScreen() {
           <Text style={styles.screenTitle}>
             {DEMO_ORIGIN_NAME} → {DEMO_DESTINATION_NAME}
           </Text>
-          <Text style={styles.screenSubtitle}>경로를 선택하세요</Text>
         </View>
 
         {loading === "routes" ? (
@@ -418,27 +442,34 @@ export default function HomeScreen() {
             </Text>
           </View>
         ) : (
-          <FlatList
-            data={routes}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.routeList}
-            ItemSeparatorComponent={() => <View style={{ height: spacing.lg }} />}
-            renderItem={({ item }) => (
-              <RouteCard
-                duration={item.summary.duration}
-                walkTime={item.summary.walkTime}
-                transfers={item.summary.transfers}
-                legs={item.legs.map((leg) => ({
-                  type: leg.type,
-                  time: leg.time,
-                  vehicleName: leg.vehicleInfo?.name,
-                  vehicleType: leg.vehicleInfo?.type,
-                  startName: leg.startName,
-                }))}
-                onPress={() => handleRouteSelect(item)}
-              />
-            )}
-          />
+          <View style={styles.routeResults}>
+            <RouteTypeTabs
+              counts={routeCounts}
+              selected={selectedRouteType}
+              onSelect={setSelectedRouteType}
+            />
+            <FlatList
+              data={visibleRoutes}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.routeList}
+              ItemSeparatorComponent={() => <View style={{ height: spacing.lg }} />}
+              renderItem={({ item }) => (
+                <RouteCard
+                  duration={item.summary.duration}
+                  walkTime={item.summary.walkTime}
+                  transfers={item.summary.transfers}
+                  legs={item.legs.map((leg) => ({
+                    type: leg.type,
+                    time: leg.time,
+                    vehicleName: leg.vehicleInfo?.name,
+                    vehicleType: leg.vehicleInfo?.type,
+                    startName: leg.startName,
+                  }))}
+                  onPress={() => handleRouteSelect(item)}
+                />
+              )}
+            />
+          </View>
         )}
       </View>
     );
@@ -848,11 +879,8 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: "center",
   },
-  screenSubtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-    textAlign: "center",
+  routeResults: {
+    flex: 1,
   },
   routeList: {
     paddingHorizontal: spacing.lg,
