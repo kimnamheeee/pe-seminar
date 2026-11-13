@@ -1,13 +1,13 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
-// 경로 후보 조회 (Kakao 대중교통 API)
+// Kakao 대중교통 경로 조회
 export const getRoutes = action({
   args: {
     origin: v.object({ lat: v.number(), lng: v.number() }),
     destination: v.object({ lat: v.number(), lng: v.number() }),
   },
-  handler: async (ctx, args): Promise<Route[]> => {
+  handler: async (_ctx, args): Promise<Route[]> => {
     const apiKey = process.env.KAKAO_REST_API_KEY;
     if (!apiKey) {
       throw new Error("KAKAO_REST_API_KEY 환경변수가 설정되지 않았습니다.");
@@ -20,139 +20,131 @@ export const getRoutes = action({
     url.searchParams.set("end_y", String(args.destination.lat));
 
     const response = await fetch(url.toString(), {
-      headers: {
-        Authorization: `KakaoAK ${apiKey}`,
-      },
+      headers: { Authorization: `KakaoAK ${apiKey}` },
     });
-
     if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Kakao API 오류: ${response.status} - ${body}`);
+      throw new Error(`Kakao API 오류: ${response.status}`);
     }
 
     const data = await response.json();
+    if (!Array.isArray(data.routes)) return [];
 
-    if (!data.routes || data.routes.length === 0) {
-      return [];
-    }
-
-    // 순수 버스 경로만 필터링 (지하철 포함 경로 제외)
-    const busOnlyRoutes = data.routes.filter((route: KakaoRoute) => {
+    return data.routes.flatMap((route: KakaoRoute, index: number) => {
       const steps = loadSteps(route);
-      return steps.every(
-        (step: KakaoStep) =>
-          step.properties?.type === "WALKING" || step.properties?.type === "BUS"
+      const totalTime = route.properties?.totalTime ?? 0;
+      if (totalTime >= 60 * 60) return [];
+      const stepsTime = steps.reduce(
+        (sum, step) => sum + (step.properties?.time ?? 0),
+        0
       );
-    });
 
-    // 경로 데이터 변환
-    return busOnlyRoutes.map((route: KakaoRoute, index: number) => {
-      const steps = loadSteps(route);
-      const legs = extractLegs(route);
-      const totalTime = route.properties?.totalTime || 0;
-      const stepsTime = steps.reduce((sum, s) => sum + (s.properties?.time || 0), 0);
-      const walkTime = Math.max(0, totalTime - stepsTime); // 암묵적 도보 시간
-
-      return {
+      return [{
         id: String(index),
+        routeType: getRouteType(route, steps),
         summary: {
-          duration: Math.round(totalTime / 60), // 초 → 분
-          busCount: countBusLegs(route),
-          walkTime: Math.round(walkTime / 60), // 도보 시간 (분)
-          transfers: route.properties?.transfers || 0,
+          duration: Math.round(totalTime / 60),
+          busCount: countSteps(steps, "BUS"),
+          subwayCount: countSteps(steps, "SUBWAY"),
+          walkTime: Math.round(Math.max(0, totalTime - stepsTime) / 60),
+          transfers: route.properties?.transfers ?? 0,
         },
-        legs,
+        legs: extractLegs(route),
         polyline: extractPolyline(route),
-      };
+      }];
     });
   },
 });
 
-// steps 추출 (route.steps 또는 route.legs[].steps)
 function loadSteps(route: KakaoRoute): KakaoStep[] {
   return route.steps ?? route.legs?.flatMap((leg) => leg.steps ?? []) ?? [];
 }
 
-// 버스 구간 수 계산
-function countBusLegs(route: KakaoRoute): number {
-  return loadSteps(route).filter(
-    (step: KakaoStep) => step.properties?.type === "BUS"
-  ).length;
+function countSteps(steps: KakaoStep[], type: "BUS" | "SUBWAY"): number {
+  return steps.filter((step) => step.properties?.type === type).length;
 }
 
-// 구간 정보 추출
-function extractLegs(route: KakaoRoute): Leg[] {
-  return loadSteps(route).map((step: KakaoStep) => {
-    const type = step.properties?.type === "WALKING" ? "WALK" : "BUS";
-    const stops = step.properties?.stops || [];
+function getRouteType(
+  route: KakaoRoute,
+  steps: KakaoStep[]
+): Route["routeType"] {
+  const routeType = route.properties?.type;
+  if (
+    routeType === "BUS" ||
+    routeType === "SUBWAY" ||
+    routeType === "BUS_AND_SUBWAY"
+  ) {
+    return routeType;
+  }
 
-    // 이 구간의 폴리라인 추출
-    const polyline: Array<{ lat: number; lng: number }> = [];
-    const points = step.path?.points || [];
-    for (const point of points) {
-      if (Array.isArray(point) && point.length >= 2) {
-        const x = Number(point[0]);
-        const y = Number(point[1]);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          polyline.push({ lat: y, lng: x });
-        }
-      }
+  const hasBus = steps.some((step) => step.properties?.type === "BUS");
+  const hasSubway = steps.some((step) => step.properties?.type === "SUBWAY");
+  if (hasBus && hasSubway) return "BUS_AND_SUBWAY";
+  if (hasSubway) return "SUBWAY";
+  return "BUS";
+}
+
+function extractLegs(route: KakaoRoute): Leg[] {
+  return loadSteps(route).map((step) => {
+    const stepType = step.properties?.type;
+    if (stepType !== "WALKING" && stepType !== "BUS" && stepType !== "SUBWAY") {
+      throw new Error(
+        `지원하지 않는 대중교통 단계 유형입니다: ${stepType || "unknown"}`
+      );
     }
 
+    const type = stepType === "WALKING" ? "WALK" : stepType;
+    const stops = step.properties?.stops ?? [];
+    const polyline = extractStepPolyline(step);
     const leg: Leg = {
-      type: type as "WALK" | "BUS",
-      startName: stops[0]?.name || "",
-      endName: stops[stops.length - 1]?.name || "",
-      time: Math.round((step.properties?.time || 0) / 60), // 초 → 분
-      distance: step.properties?.distance || 0, // 미터
+      type,
+      startName: stops[0]?.name ?? "",
+      endName: stops[stops.length - 1]?.name ?? "",
+      time: Math.round((step.properties?.time ?? 0) / 60),
+      distance: step.properties?.distance ?? 0,
       polyline,
     };
 
-    if (type === "BUS" && step.properties) {
-      // vehicles 배열에서 버스 번호 추출
-      const vehicle = step.properties.vehicles?.[0];
-      leg.busInfo = {
-        busNo: vehicle?.name || "",
-        busType: vehicle?.type || "", // 간선, 지선 등
+    if (type !== "WALK") {
+      const vehicle = step.properties?.vehicles?.[0];
+      leg.vehicleInfo = {
+        name: vehicle?.name ?? "",
+        type: vehicle?.type ?? "",
       };
-      // 정류장 정보 추출 (Kakao API는 정류장 좌표를 제공하지 않음)
-      leg.stations = stops.map((stop: KakaoStop) => ({
-        name: stop.name || "",
-        lat: 0,
-        lng: 0,
-      }));
+      // Kakao 정류장 단계는 이름만 제공하므로 좌표는 mode별 DB에서 찾는다.
+      leg.stations = stops.map((stop) => ({ name: stop.name ?? "" }));
     }
 
     return leg;
   });
 }
 
-// 경로 좌표 추출
-function extractPolyline(route: KakaoRoute): Array<{ lat: number; lng: number }> {
-  const coords: Array<{ lat: number; lng: number }> = [];
-
-  for (const step of loadSteps(route)) {
-    const points = step.path?.points || [];
-    for (const point of points) {
-      if (Array.isArray(point) && point.length >= 2) {
-        const x = Number(point[0]);
-        const y = Number(point[1]);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          coords.push({ lat: y, lng: x });
-        }
-      }
+function extractStepPolyline(step: KakaoStep): Coordinate[] {
+  const coordinates: Coordinate[] = [];
+  for (const point of step.path?.points ?? []) {
+    if (point.length < 2) continue;
+    const lng = Number(point[0]);
+    const lat = Number(point[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      coordinates.push({ lat, lng });
     }
   }
-
-  return coords;
+  return coordinates;
 }
 
-// 타입 정의
+function extractPolyline(route: KakaoRoute): Coordinate[] {
+  return loadSteps(route).flatMap(extractStepPolyline);
+}
+
+interface Coordinate {
+  lat: number;
+  lng: number;
+}
+
 interface KakaoRoute {
   properties?: {
     totalTime?: number;
     transfers?: number;
-    type?: string;
+    type?: "BUS" | "SUBWAY" | "BUS_AND_SUBWAY";
   };
   steps?: KakaoStep[];
   legs?: Array<{ steps?: KakaoStep[] }>;
@@ -160,57 +152,40 @@ interface KakaoRoute {
 
 interface KakaoStep {
   properties?: {
-    type?: string;
+    type?: "WALKING" | "BUS" | "SUBWAY";
     distance?: number;
     time?: number;
-    guidance?: string;
     stops?: KakaoStop[];
-    vehicles?: Array<{
-      name?: string;
-      type?: string;
-    }>;
+    vehicles?: Array<{ name?: string; type?: string }>;
   };
-  path?: {
-    points?: Array<[number, number]>;
-  };
+  path?: { points?: Array<[number, number]> };
 }
 
 interface KakaoStop {
   name?: string;
-  x?: number;
-  y?: number;
-  longitude?: number;
-  latitude?: number;
-  lng?: number;
-  lat?: number;
 }
 
 interface Route {
   id: string;
+  routeType: "BUS" | "SUBWAY" | "BUS_AND_SUBWAY";
   summary: {
-    duration: number; // 총 소요시간 (분)
-    busCount: number; // 버스 구간 수
-    walkTime: number; // 도보 시간 (분)
-    transfers: number; // 환승 횟수
+    duration: number;
+    busCount: number;
+    subwayCount: number;
+    walkTime: number;
+    transfers: number;
   };
   legs: Leg[];
-  polyline: Array<{ lat: number; lng: number }>;
+  polyline: Coordinate[];
 }
 
 interface Leg {
-  type: "WALK" | "BUS";
+  type: "WALK" | "BUS" | "SUBWAY";
   startName: string;
   endName: string;
-  time: number; // 소요시간 (분)
-  distance: number; // 거리 (미터)
-  polyline: Array<{ lat: number; lng: number }>; // 구간 경로 좌표
-  busInfo?: {
-    busNo: string;
-    busType: string; // 간선, 지선 등
-  };
-  stations?: Array<{
-    name: string;
-    lat: number;
-    lng: number;
-  }>;
+  time: number;
+  distance: number;
+  polyline: Coordinate[];
+  vehicleInfo?: { name: string; type: string };
+  stations?: Array<{ name: string }>;
 }

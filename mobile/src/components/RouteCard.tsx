@@ -2,10 +2,10 @@ import { View, Text, StyleSheet, Pressable } from "react-native";
 import { colors, typography, spacing, radius } from "../lib/theme";
 
 interface LegInfo {
-  type: "WALK" | "BUS";
+  type: "WALK" | "BUS" | "SUBWAY";
   time: number; // 분
-  busNo?: string;
-  busType?: string;
+  vehicleName?: string;
+  vehicleType?: string;
 }
 
 interface RouteCardProps {
@@ -26,7 +26,7 @@ export function RouteCard({
   onPress,
 }: RouteCardProps) {
   const segments = buildSegments(legs, walkTime);
-  const busLegs = legs.filter((leg) => leg.type === "BUS" && leg.busNo);
+  const transitLegs = legs.filter((leg) => leg.type !== "WALK" && leg.vehicleName);
 
   return (
     <Pressable
@@ -68,18 +68,20 @@ export function RouteCard({
               style={seg.type === "WALK" ? styles.walkLabel : styles.busLabel}
               numberOfLines={1}
             >
-              {seg.type === "BUS" ? seg.busNo : `${seg.time}분`}
+              {seg.type === "WALK" ? `${seg.time}분` : seg.vehicleName || `${seg.time}분`}
             </Text>
           </View>
         ))}
       </View>
 
       {/* 버스 상세 (번호 + 시간) */}
-      {busLegs.length > 0 && (
+      {transitLegs.length > 0 && (
         <View style={styles.busDetails}>
-          {busLegs.map((leg, index) => (
+          {transitLegs.map((leg, index) => (
             <View key={index} style={styles.busDetail}>
-              <Text style={styles.busDetailNo}>{leg.busNo}</Text>
+              <Text style={styles.busDetailNo}>
+                {leg.type === "BUS" ? "버스" : "지하철"} {leg.vehicleName}
+              </Text>
               <Text style={styles.busDetailTime}>{leg.time}분</Text>
             </View>
           ))}
@@ -92,8 +94,8 @@ export function RouteCard({
 function buildSegments(
   legs: LegInfo[],
   walkTime: number
-): Array<{ type: "WALK" | "BUS"; time: number; busNo?: string }> {
-  const segments: Array<{ type: "WALK" | "BUS"; time: number; busNo?: string }> = [];
+): Array<{ type: LegInfo["type"]; time: number; vehicleName?: string }> {
+  const segments: Array<{ type: LegInfo["type"]; time: number; vehicleName?: string }> = [];
 
   const walkPerEnd = Math.round(walkTime / 2);
   const startWalk = walkPerEnd;
@@ -104,7 +106,7 @@ function buildSegments(
   }
 
   for (const leg of legs) {
-    segments.push({ type: leg.type, time: leg.time, busNo: leg.busNo });
+    segments.push({ type: leg.type, time: leg.time, vehicleName: leg.vehicleName });
   }
 
   if (endWalk > 0) {

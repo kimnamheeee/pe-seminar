@@ -8,9 +8,9 @@
  * @module
  */
 
-import type * as busStops from "../busStops.js";
 import type * as restaurants from "../restaurants.js";
 import type * as routes from "../routes.js";
+import type * as transitStops from "../transitStops.js";
 
 import type {
   ApiFromModules,
@@ -19,9 +19,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  busStops: typeof busStops;
   restaurants: typeof restaurants;
   routes: typeof routes;
+  transitStops: typeof transitStops;
 }>;
 
 /**

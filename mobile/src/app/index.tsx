@@ -24,21 +24,23 @@ const DEMO_DESTINATION_NAME = "강남역";
 
 type Route = {
   id: string;
+  routeType: "BUS" | "SUBWAY" | "BUS_AND_SUBWAY";
   summary: {
     duration: number;
     busCount: number;
+    subwayCount: number;
     walkTime: number;
     transfers: number;
   };
   legs: Array<{
-    type: "WALK" | "BUS";
+    type: "WALK" | "BUS" | "SUBWAY";
     startName: string;
     endName: string;
     time: number;
     distance: number;
     polyline: Array<{ lat: number; lng: number }>;
-    busInfo?: { busNo: string; busType: string };
-    stations?: Array<{ name: string; lat: number; lng: number }>;
+    vehicleInfo?: { name: string; type: string };
+    stations?: Array<{ name: string }>;
   }>;
   polyline: Array<{ lat: number; lng: number }>;
 };
@@ -184,17 +186,13 @@ export default function HomeScreen() {
         type: leg.type,
         startProgress: index === 0 ? 0 : (legProgressRanges[index - 1] || 0),
         polyline: leg.polyline,
-        stations: (leg.stations || []).map((s) => ({
-          name: s.name,
-          lat: s.lat,
-          lng: s.lng,
-        })),
+        stations: (leg.stations || []).map((s) => ({ name: s.name })),
       })),
     };
   }, [selectedRoute, restaurants, legProgressRanges]);
 
   const nearestStopsData = useQuery(
-    api.busStops.getNearestStopsForRestaurants,
+    api.transitStops.getNearestStopsForRestaurants,
     nearestStopsArgs
   );
 
@@ -208,14 +206,14 @@ export default function HomeScreen() {
   const selectedStopInfo = selectedRestaurant ? getStopInfoForRestaurant(selectedRestaurant.id) : null;
   const stopLegIndex = selectedStopInfo?.stopLegIndex ?? -1;
 
-  // 버스가 실제로 필요한지 확인 (승차/하차 정류장이 다른 버스 구간이 있는지)
-  const needsBus = useMemo(() => {
+  // 선택한 하차 지점까지 실제로 이용해야 하는 대중교통 구간이 있는지 확인
+  const needsTransit = useMemo(() => {
     if (!selectedRestaurant || !selectedRoute || !selectedStopInfo?.found) return true;
     if (stopLegIndex < 0) return false;
 
     for (let i = 0; i <= stopLegIndex; i++) {
       const leg = selectedRoute.legs[i];
-      if (leg.type !== "BUS" || !leg.busInfo) continue;
+      if (leg.type === "WALK" || !leg.vehicleInfo) continue;
 
       const isStopLeg = i === stopLegIndex;
       const alightStop = isStopLeg ? selectedStopInfo.stop?.name : leg.endName;
@@ -257,7 +255,7 @@ export default function HomeScreen() {
       if (leg.polyline.length < 2) continue;
 
       // 버스 불필요하면 전체 회색, 아니면 하차 정류장 이후만 회색
-      const isGrayed = selectedRestaurant && (!needsBus || (stopLegIndex >= 0 && legIndex > stopLegIndex));
+      const isGrayed = selectedRestaurant && (!needsTransit || (stopLegIndex >= 0 && legIndex > stopLegIndex));
 
       for (let i = 1; i < leg.polyline.length; i++) {
         const p1 = leg.polyline[i - 1];
@@ -284,7 +282,7 @@ export default function HomeScreen() {
     }
 
     return arrows;
-  }, [selectedRoute, selectedRestaurant, stopLegIndex, needsBus]);
+  }, [selectedRoute, selectedRestaurant, stopLegIndex, needsTransit]);
 
   // 경로 로드
   const loadRoutes = useCallback(async () => {
@@ -416,7 +414,7 @@ export default function HomeScreen() {
         ) : routes.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
-              순수 버스 경로를 찾지 못했습니다.
+              대중교통 경로를 찾지 못했습니다.
             </Text>
           </View>
         ) : (
@@ -433,8 +431,8 @@ export default function HomeScreen() {
                 legs={item.legs.map((leg) => ({
                   type: leg.type,
                   time: leg.time,
-                  busNo: leg.busInfo?.busNo,
-                  busType: leg.busInfo?.busType,
+                  vehicleName: leg.vehicleInfo?.name,
+                  vehicleType: leg.vehicleInfo?.type,
                   startName: leg.startName,
                 }))}
                 onPress={() => handleRouteSelect(item)}
@@ -476,7 +474,7 @@ export default function HomeScreen() {
         {/* 경로선 - 구간별로 다른 스타일, 식당 선택 시 하차 정류장 이후는 회색 */}
         {selectedRoute.legs.map((leg, index) => {
           // 식당 선택 시: 버스 불필요하면 전체 회색, 아니면 하차 정류장 이후만 회색
-          const isGrayed = selectedRestaurant && (!needsBus || (stopLegIndex >= 0 && index > stopLegIndex));
+          const isGrayed = selectedRestaurant && (!needsTransit || (stopLegIndex >= 0 && index > stopLegIndex));
           const grayColor = "#CCCCCC";
 
           return (
@@ -558,10 +556,17 @@ export default function HomeScreen() {
 
         {/* 환승 지점 마커 */}
         {selectedRoute.legs.map((leg, index) => {
-          // 첫 구간이 아니고 버스 구간인 경우 시작점에 환승 마커 표시
-          const prevLeg = selectedRoute.legs[index - 1];
+          // 중간 도보 구간이 있어도 이전 대중교통 단계 뒤에는 환승 표시
+          const previousTransitLeg = selectedRoute.legs
+            .slice(0, index)
+            .reverse()
+            .find((previousLeg) => previousLeg.type !== "WALK");
           const isAfterStop = selectedRestaurant && stopLegIndex >= 0 && index > stopLegIndex;
-          if (index > 0 && leg.type === "BUS" && prevLeg?.type === "BUS" && leg.polyline.length > 0) {
+          if (
+            leg.type !== "WALK" &&
+            previousTransitLeg &&
+            leg.polyline.length > 0
+          ) {
             const startPoint = leg.polyline[0];
             return (
               <Marker
@@ -693,14 +698,20 @@ export default function HomeScreen() {
                       <>
                         {!isSelected && (
                           <View style={styles.stopSummary}>
-                            <Ionicons name="bus-outline" size={16} color={colors.primary} />
+                            <Ionicons
+                              name={itemStopInfo.stop?.mode === "SUBWAY" ? "train-outline" : "bus-outline"}
+                              size={16}
+                              color={colors.primary}
+                            />
                             {itemStopInfo.found && itemStopInfo.stop ? (
                               <Text style={styles.stopSummaryText} numberOfLines={1}>
-                                <Text style={styles.stopSummaryEmphasis}>하차 </Text>
+                                <Text style={styles.stopSummaryEmphasis}>
+                                  {itemStopInfo.stop.mode === "BUS" ? "하차 정류장 " : "하차 역 "}
+                                </Text>
                                 {itemStopInfo.stop.name}
                               </Text>
                             ) : (
-                              <Text style={styles.stopSummaryText}>하차 정류장을 찾지 못했어요</Text>
+                              <Text style={styles.stopSummaryText}>하차 정보를 찾지 못했어요</Text>
                             )}
                             {itemStopInfo.found && itemStopInfo.stop && (
                               <Text style={styles.stopSummaryDistance}>
@@ -721,7 +732,7 @@ export default function HomeScreen() {
 
                             {selectedRoute.legs.map((leg, index) => {
                               if (itemStopLegIndex >= 0 && index > itemStopLegIndex) return null;
-                              if (leg.type !== "BUS" || !leg.busInfo) return null;
+                              if (leg.type === "WALK" || !leg.vehicleInfo) return null;
 
                               const isStopLeg = index === itemStopLegIndex;
                               const alightStop = isStopLeg && itemStopInfo.found && itemStopInfo.stop
@@ -733,10 +744,12 @@ export default function HomeScreen() {
                               return (
                                 <View key={index} style={styles.routeStep}>
                                   <View style={styles.routeStepIcon}>
-                                    <Ionicons name="bus" size={16} color={colors.primary} />
+                                  <Ionicons name={leg.type === "BUS" ? "bus" : "train"} size={16} color={colors.primary} />
                                   </View>
                                   <Text style={styles.routeStepText}>
-                                    <Text style={styles.routeStepBus}>{leg.busInfo.busNo}</Text>
+                                    <Text style={styles.routeStepBus}>
+                                      {leg.type === "BUS" ? "버스 " : "지하철 "}{leg.vehicleInfo.name}
+                                    </Text>
                                     {" "}{leg.startName} → {alightStop}
                                   </Text>
                                 </View>

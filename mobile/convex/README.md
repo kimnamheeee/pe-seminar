@@ -1,3 +1,8 @@
 # Convex functions
 
-Kakao transit and place search calls belong in Convex server functions so provider credentials stay off the device. Add `routes.ts` and `places.ts` when the Convex deployment is connected. Store Kakao credentials with `npx convex env set`; never place them in an `EXPO_PUBLIC_` variable.
+- `routes.ts` calls Kakao's public transit route API and preserves BUS, SUBWAY, and combined route/leg types.
+- `restaurants.ts` searches Kakao Local around a selected route.
+- `transitStops.ts` matches BUS and SUBWAY route legs to same-mode coordinates in `transitStops`.
+- Kakao credentials stay in Convex environment variables; never put them in an `EXPO_PUBLIC_` variable.
+
+`transitStops.upsertBatch` and `transitStops.migrateLegacyBusStops` are internal functions used by the seed script. Run `node scripts/seed-transit-stops.mjs` from the repository root to migrate legacy bus rows and seed `data/subway.csv` into the configured development deployment. The operation is idempotent by mode and source ID.
