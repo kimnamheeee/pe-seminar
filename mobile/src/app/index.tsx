@@ -63,6 +63,8 @@ type PlaceSearchResult = {
   lng: number;
 };
 
+type RouteSearchStatus = "NO_ROUTES" | "ALL_TOO_LONG" | null;
+
 export default function HomeScreen() {
   const [originPlace, setOriginPlace] = useState<PlaceSearchResult | null>(null);
   const [destinationPlace, setDestinationPlace] = useState<PlaceSearchResult | null>(null);
@@ -77,6 +79,7 @@ export default function HomeScreen() {
   const [currentLocationError, setCurrentLocationError] = useState<string | null>(null);
   const placeSearchInputRef = useRef<TextInputInstance>(null);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [routeSearchStatus, setRouteSearchStatus] = useState<RouteSearchStatus>(null);
   const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
@@ -138,7 +141,7 @@ export default function HomeScreen() {
     }
   }, [selectedRestaurant]);
 
-  const getRoutes = useAction(api.routes.getRoutes);
+  const getRoutes = useAction(api.routes.getRoutesWithStatus);
   const getRestaurants = useAction(api.restaurants.getRestaurants);
   const searchPlaces = useAction(api.places.searchPlaces);
 
@@ -179,6 +182,16 @@ export default function HomeScreen() {
       clearTimeout(timeout);
     };
   }, [placeSearchTarget, placeQuery, placeSearchRetry, searchPlaces]);
+
+  useEffect(() => {
+    if (!placeSearchTarget) return;
+
+    const focusTimeout = setTimeout(() => {
+      placeSearchInputRef.current?.focus();
+    }, 120);
+
+    return () => clearTimeout(focusTimeout);
+  }, [placeSearchTarget]);
 
   const routeCounts = useMemo<Record<RouteTypeTabKey, number>>(() => {
     const counts: Record<RouteTypeTabKey, number> = {
@@ -365,26 +378,45 @@ export default function HomeScreen() {
     return arrows;
   }, [selectedRoute, selectedRestaurant, stopLegIndex, needsTransit]);
 
-  // 경로 로드
-  const loadRoutes = useCallback(async () => {
-    if (!originPlace || !destinationPlace) return;
-
+  // 선택한 장소 사이의 경로 로드
+  const searchRoutesBetween = useCallback(async (
+    origin: PlaceSearchResult,
+    destination: PlaceSearchResult
+  ) => {
     setIsShowingRoutes(true);
     setLoading("routes");
     setError(null);
+    setRouteSearchStatus(null);
     setSelectedRouteType("ALL");
+    setRoutes([]);
     try {
       const result = await getRoutes({
-        origin: { lat: originPlace.lat, lng: originPlace.lng },
-        destination: { lat: destinationPlace.lat, lng: destinationPlace.lng },
+        origin: { lat: origin.lat, lng: origin.lng },
+        destination: { lat: destination.lat, lng: destination.lng },
       });
-      setRoutes(result);
+      setRoutes(result.routes);
+      setRouteSearchStatus(result.status === "FOUND" ? null : result.status);
     } catch (e) {
       setError("경로를 불러오지 못했습니다. 다시 시도해주세요.");
     } finally {
       setLoading(null);
     }
-  }, [getRoutes, originPlace, destinationPlace]);
+  }, [getRoutes]);
+
+  const loadRoutes = useCallback(() => {
+    if (!originPlace || !destinationPlace) return;
+    void searchRoutesBetween(originPlace, destinationPlace);
+  }, [originPlace, destinationPlace, searchRoutesBetween]);
+
+  const handleSwapRouteEndpoints = useCallback(() => {
+    if (!originPlace || !destinationPlace || loading === "routes") return;
+
+    const nextOrigin = destinationPlace;
+    const nextDestination = originPlace;
+    setOriginPlace(nextOrigin);
+    setDestinationPlace(nextDestination);
+    void searchRoutesBetween(nextOrigin, nextDestination);
+  }, [destinationPlace, loading, originPlace, searchRoutesBetween]);
 
   // 경로 선택
   const [loadingRestaurants, setLoadingRestaurants] = useState(false);
@@ -496,16 +528,21 @@ export default function HomeScreen() {
   }, [originPlace, destinationPlace]);
 
   const selectPlace = useCallback((place: PlaceSearchResult) => {
-    if (placeSearchTarget === "origin") {
-      setOriginPlace(place);
-    } else if (placeSearchTarget === "destination") {
-      setDestinationPlace(place);
-    }
+    const nextOrigin = placeSearchTarget === "origin" ? place : originPlace;
+    const nextDestination = placeSearchTarget === "destination" ? place : destinationPlace;
+
+    if (placeSearchTarget === "origin") setOriginPlace(place);
+    if (placeSearchTarget === "destination") setDestinationPlace(place);
+
     Keyboard.dismiss();
     setPlaceSearchTarget(null);
     setPlaceQuery("");
     setPlaceResults([]);
-  }, [placeSearchTarget]);
+
+    if (isShowingRoutes && nextOrigin && nextDestination) {
+      void searchRoutesBetween(nextOrigin, nextDestination);
+    }
+  }, [destinationPlace, isShowingRoutes, originPlace, placeSearchTarget, searchRoutesBetween]);
 
   const handleSwapLocations = useCallback(() => {
     if (!originPlace && !destinationPlace) return;
@@ -543,8 +580,6 @@ export default function HomeScreen() {
             placeholder="장소명을 입력하세요"
             placeholderTextColor={colors.textSecondary}
             style={styles.placeSearchTextInput}
-            autoFocus
-            selectTextOnFocus
             autoCapitalize="none"
             returnKeyType="search"
             accessibilityLabel={`${targetLabel} 검색어`}
@@ -723,9 +758,59 @@ export default function HomeScreen() {
       <View style={styles.container}>
         <Header onBack={handleBackToIntro} />
         <View style={styles.screenHeader}>
-          <Text style={styles.screenTitle}>
-            {originPlace?.name ?? "출발지"} → {destinationPlace?.name ?? "도착지"}
-          </Text>
+          <View style={styles.routeHeader}>
+            <View style={styles.routeEndpoints}>
+              <Pressable
+                style={({ pressed }) => [styles.routeEndpoint, pressed && styles.routeEndpointPressed]}
+                onPress={() => openPlaceSearch("origin")}
+                disabled={loading === "routes"}
+                accessibilityRole="button"
+                accessibilityLabel={`출발지 변경, 현재 ${originPlace?.name ?? "미선택"}`}
+                accessibilityHint="새 장소를 선택하면 경로를 다시 검색합니다."
+                accessibilityState={{ disabled: loading === "routes" }}
+              >
+                <Ionicons name="ellipse-outline" size={19} color={colors.primary} />
+                <View style={styles.routeEndpointValue}>
+                  <Text numberOfLines={1} style={styles.routeEndpointName}>
+                    {originPlace?.name ?? "출발지"}
+                  </Text>
+                </View>
+              </Pressable>
+
+              <View style={styles.routeEndpointConnector} />
+
+              <Pressable
+                style={({ pressed }) => [styles.routeEndpoint, pressed && styles.routeEndpointPressed]}
+                onPress={() => openPlaceSearch("destination")}
+                disabled={loading === "routes"}
+                accessibilityRole="button"
+                accessibilityLabel={`도착지 변경, 현재 ${destinationPlace?.name ?? "미선택"}`}
+                accessibilityHint="새 장소를 선택하면 경로를 다시 검색합니다."
+                accessibilityState={{ disabled: loading === "routes" }}
+              >
+                <Ionicons name="location-outline" size={20} color={colors.primary} />
+                <View style={styles.routeEndpointValue}>
+                  <Text numberOfLines={1} style={styles.routeEndpointName}>
+                    {destinationPlace?.name ?? "도착지"}
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={[
+                styles.routeSwapButton,
+                loading === "routes" && styles.routeSwapButtonDisabled,
+              ]}
+              onPress={handleSwapRouteEndpoints}
+              disabled={loading === "routes"}
+              accessibilityRole="button"
+              accessibilityLabel="출발지와 도착지를 바꾸고 경로 다시 찾기"
+              accessibilityState={{ disabled: loading === "routes", busy: loading === "routes" }}
+            >
+              <Ionicons name="swap-vertical-outline" size={20} color={colors.primary} />
+            </Pressable>
+          </View>
         </View>
 
         {loading === "routes" ? (
@@ -741,7 +826,9 @@ export default function HomeScreen() {
         ) : routes.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
-              대중교통 경로를 찾지 못했습니다.
+              {routeSearchStatus === "ALL_TOO_LONG"
+                ? "60분 미만 대중교통 경로를 찾지 못했습니다."
+                : "두 장소 사이에 대중교통 경로가 없습니다."}
             </Text>
           </View>
         ) : (
@@ -1360,13 +1447,64 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   screenHeader: {
-    padding: spacing.lg,
-    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
-  screenTitle: {
-    ...typography.title,
+  routeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  routeEndpoints: {
+    flexDirection: "column",
+    flex: 1,
+    minWidth: 0,
+  },
+  routeEndpoint: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    gap: spacing.md,
+  },
+  routeEndpointPressed: {
+    opacity: 0.72,
+  },
+  routeEndpointValue: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flex: 1,
+  },
+  routeEndpointName: {
+    ...typography.body,
     color: colors.textPrimary,
-    textAlign: "center",
+    fontWeight: "600",
+    flex: 1,
+  },
+  routeEndpointConnector: {
+    height: spacing.sm,
+    width: 1,
+    marginLeft: spacing.xl,
+    backgroundColor: colors.border,
+  },
+  routeSwapButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  routeSwapButtonDisabled: {
+    opacity: 0.5,
   },
   routeResults: {
     flex: 1,

@@ -1,13 +1,30 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
-// Kakao 대중교통 경로 조회
+const routeSearchArgs = {
+  origin: v.object({ lat: v.number(), lng: v.number() }),
+  destination: v.object({ lat: v.number(), lng: v.number() }),
+};
+
+// Keep the original array response for already-installed app builds.
 export const getRoutes = action({
-  args: {
-    origin: v.object({ lat: v.number(), lng: v.number() }),
-    destination: v.object({ lat: v.number(), lng: v.number() }),
-  },
+  args: routeSearchArgs,
   handler: async (_ctx, args): Promise<Route[]> => {
+    return (await searchRoutes(args)).routes;
+  },
+});
+
+// New clients use this endpoint to distinguish an empty route set from routes
+// that all exceed the 60-minute limit.
+export const getRoutesWithStatus = action({
+  args: routeSearchArgs,
+  handler: async (_ctx, args): Promise<RouteSearchResult> => searchRoutes(args),
+});
+
+async function searchRoutes(args: {
+  origin: Coordinate;
+  destination: Coordinate;
+}): Promise<RouteSearchResult> {
     const apiKey = process.env.KAKAO_REST_API_KEY;
     if (!apiKey) {
       throw new Error("KAKAO_REST_API_KEY 환경변수가 설정되지 않았습니다.");
@@ -26,12 +43,24 @@ export const getRoutes = action({
       throw new Error(`Kakao API 오류: ${response.status}`);
     }
 
-    const data = await response.json();
-    if (!Array.isArray(data.routes)) return [];
+    const data: unknown = await response.json();
+    if (!isRecord(data) || !Array.isArray(data.routes)) {
+      throw new Error("Kakao 경로 검색 응답 형식이 올바르지 않습니다.");
+    }
+    if (data.routes.length === 0) {
+      return { status: "NO_ROUTES", routes: [] };
+    }
 
-    return data.routes.flatMap((route: KakaoRoute, index: number) => {
+    const routes = data.routes.flatMap((value: unknown, index: number) => {
+      if (!isRecord(value)) {
+        throw new Error("Kakao 경로 검색 응답 형식이 올바르지 않습니다.");
+      }
+      const route = value as KakaoRoute;
       const steps = loadSteps(route);
-      const totalTime = route.properties?.totalTime ?? 0;
+      const totalTime = route.properties?.totalTime;
+      if (typeof totalTime !== "number" || !Number.isFinite(totalTime)) {
+        throw new Error("Kakao 경로 검색 응답에 소요 시간이 없습니다.");
+      }
       if (totalTime >= 60 * 60) return [];
       const stepsTime = steps.reduce(
         (sum, step) => sum + (step.properties?.time ?? 0),
@@ -52,8 +81,13 @@ export const getRoutes = action({
         polyline: extractPolyline(route),
       }];
     });
-  },
-});
+
+    if (routes.length === 0) {
+      return { status: "ALL_TOO_LONG", routes: [] };
+    }
+
+    return { status: "FOUND", routes };
+}
 
 function loadSteps(route: KakaoRoute): KakaoStep[] {
   return route.steps ?? route.legs?.flatMap((leg) => leg.steps ?? []) ?? [];
@@ -177,6 +211,15 @@ interface Route {
   };
   legs: Leg[];
   polyline: Coordinate[];
+}
+
+interface RouteSearchResult {
+  status: "FOUND" | "NO_ROUTES" | "ALL_TOO_LONG";
+  routes: Route[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 interface Leg {
