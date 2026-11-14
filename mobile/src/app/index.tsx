@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect, type ComponentRef } from "react";
+import { Fragment, useState, useCallback, useRef, useMemo, useEffect, type ComponentRef } from "react";
 import { Dimensions, Modal } from "react-native";
 import {
   View,
@@ -77,6 +77,49 @@ type RestaurantStopInfo = {
   };
   stopLegIndex?: number;
 };
+
+type RoutePoint = { lat: number; lng: number };
+
+function splitPolylineAtPoint(polyline: RoutePoint[], point: RoutePoint) {
+  if (polyline.length < 2) return { before: polyline, after: [] as RoutePoint[] };
+
+  const metersPerDegreeLng = 111_320 * Math.cos((point.lat * Math.PI) / 180);
+  let closestDistance = Infinity;
+  let splitIndex = 1;
+  let closestPoint = polyline[0];
+
+  for (let i = 1; i < polyline.length; i++) {
+    const start = polyline[i - 1];
+    const end = polyline[i];
+    const startX = (start.lng - point.lng) * metersPerDegreeLng;
+    const startY = (start.lat - point.lat) * 111_320;
+    const endX = (end.lng - point.lng) * metersPerDegreeLng;
+    const endY = (end.lat - point.lat) * 111_320;
+    const deltaX = endX - startX;
+    const deltaY = endY - startY;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    const t = lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, -(startX * deltaX + startY * deltaY) / lengthSquared));
+    const distanceX = startX + t * deltaX;
+    const distanceY = startY + t * deltaY;
+    const distance = distanceX * distanceX + distanceY * distanceY;
+
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      splitIndex = i;
+      closestPoint = {
+        lat: start.lat + (end.lat - start.lat) * t,
+        lng: start.lng + (end.lng - start.lng) * t,
+      };
+    }
+  }
+
+  return {
+    before: [...polyline.slice(0, splitIndex), closestPoint],
+    after: [closestPoint, ...polyline.slice(splitIndex)],
+  };
+}
 
 function getLegEndProgress(route: Route): number[] {
   let totalLength = 0;
@@ -1101,30 +1144,37 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* 경로선 - 구간별로 다른 스타일, 식당 선택 시 하차 정류장 이후는 회색 */}
+        {/* 경로선 - 선택 식당의 하차 지점을 기준으로 이후 구간은 회색 */}
         {selectedRoute.legs.map((leg, index) => {
           // 식당 선택 시: 버스 불필요하면 전체 회색, 아니면 하차 정류장 이후만 회색
           const isGrayed = selectedRestaurant && (!needsTransit || (stopLegIndex >= 0 && index > stopLegIndex));
           const grayColor = "#CCCCCC";
-
-          return (
+          const stopOnThisLeg = selectedRestaurant && needsTransit && index === stopLegIndex
+            ? selectedStopInfo?.stop
+            : null;
+          const splitLine = stopOnThisLeg
+            ? splitPolylineAtPoint(leg.polyline, stopOnThisLeg)
+            : null;
+          const renderLine = (points: RoutePoint[], suffix: string, grayed: boolean) => points.length >= 2 ? (
             <Polyline
-              key={index}
-              coordinates={leg.polyline.map((p) => ({
-                latitude: p.lat,
-                longitude: p.lng,
-              }))}
-              strokeColor={
-                isGrayed
-                  ? grayColor
-                  : leg.type === "WALK"
-                    ? "#888888"
-                    : "#1A3A5C"
-              }
+              key={`${index}-${suffix}`}
+              coordinates={points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+              strokeColor={grayed ? grayColor : leg.type === "WALK" ? "#888888" : "#1A3A5C"}
               strokeWidth={leg.type === "WALK" ? 5 : 10}
               lineDashPattern={leg.type === "WALK" ? [10, 8] : undefined}
             />
-          );
+          ) : null;
+
+          if (splitLine) {
+            return (
+              <Fragment key={index}>
+                {renderLine(splitLine.before, "before-stop", false)}
+                {renderLine(splitLine.after, "after-stop", true)}
+              </Fragment>
+            );
+          }
+
+          return renderLine(leg.polyline, "full", !!isGrayed);
         })}
 
         {/* 도보 구간: 마지막 정류장 → 도착지 (식당 선택 시 회색) */}
