@@ -25,6 +25,8 @@ export const colors = {
   warning: "#94600C",
 } as const;
 
+export const appFontFamily = "Pretendard";
+
 export const typography = {
   // 화면 제목
   title: {

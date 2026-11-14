@@ -1,14 +1,15 @@
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, StyleSheet, Pressable } from "react-native";
+import { AppText as Text } from "./AppText";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, typography, spacing } from "../lib/theme";
+import { colors, spacing } from "../lib/theme";
 
 interface HeaderProps {
   onBack?: () => void;
   title?: string;
 }
 
-export function Header({ onBack, title = "가는김에" }: HeaderProps) {
+export function Header({ onBack, title = "가는 김에" }: HeaderProps) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -23,7 +24,7 @@ export function Header({ onBack, title = "가는김에" }: HeaderProps) {
           )}
         </View>
 
-        {/* 중앙: 로고/타이틀 */}
+        {/* 중앙: 서비스명을 텍스트로 표시해 헤더 안에 여백을 확보 */}
         <Text style={styles.logo}>{title}</Text>
 
         {/* 우측: 균형용 빈 공간 */}
@@ -58,8 +59,9 @@ const styles = StyleSheet.create({
     marginLeft: -spacing.sm,
   },
   logo: {
-    ...typography.subtitle,
+    fontSize: 18,
+    lineHeight: 24,
     color: colors.primary,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 });

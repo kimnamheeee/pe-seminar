@@ -8,9 +8,11 @@
  * @module
  */
 
-import type * as busStops from "../busStops.js";
+import type * as places from "../places.js";
 import type * as restaurants from "../restaurants.js";
 import type * as routes from "../routes.js";
+import type * as seoulBoundary from "../seoulBoundary.js";
+import type * as transitStops from "../transitStops.js";
 
 import type {
   ApiFromModules,
@@ -19,9 +21,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  busStops: typeof busStops;
+  places: typeof places;
   restaurants: typeof restaurants;
   routes: typeof routes;
+  seoulBoundary: typeof seoulBoundary;
+  transitStops: typeof transitStops;
 }>;
 
 /**

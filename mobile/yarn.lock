@@ -1265,6 +1265,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@expo/image-utils@npm:^0.12.7":
+  version: 0.12.7
+  resolution: "@expo/image-utils@npm:0.12.7"
+  dependencies:
+    "@expo/require-utils": "npm:^58.0.6"
+    "@expo/spawn-async": "npm:^1.8.0"
+    chalk: "npm:^4.0.0"
+    jimp-compact: "npm:0.16.1"
+    parse-png: "npm:^2.1.0"
+    semver: "npm:^7.7.4"
+  checksum: 10c0/af50e654fea31c25ca3293834e901fa39a21d6816d829aef07cd20c259d72b37e7ed888cf0fc42ed98ffa88f01bc9a61db77ce06dafd1d4f1d1a1d99c78ed357
+  languageName: node
+  linkType: hard
+
 "@expo/inline-modules@npm:^0.2.8":
   version: 0.2.8
   resolution: "@expo/inline-modules@npm:0.2.8"
@@ -1533,6 +1547,22 @@ __metadata:
     typescript:
       optional: true
   checksum: 10c0/2217314eef8750a04fb8965dfbe0bfe15f2b0efe4fba120c8c8b0bb1e69914f7ed6156ad3962154d728cc83f5f0e285061c98a44ad9804e849f3b09b18a97698
+  languageName: node
+  linkType: hard
+
+"@expo/require-utils@npm:^58.0.6":
+  version: 58.0.6
+  resolution: "@expo/require-utils@npm:58.0.6"
+  dependencies:
+    "@babel/code-frame": "npm:^7.20.0"
+    "@babel/core": "npm:^7.25.2"
+    "@babel/plugin-transform-modules-commonjs": "npm:^7.24.8"
+  peerDependencies:
+    typescript: ^5.0.0 || ^5.0.0-0 || ^6.0.0 || ^7.0.0
+  peerDependenciesMeta:
+    typescript:
+      optional: true
+  checksum: 10c0/dbb83cde07f12e520f92bfc1ed6bdb82de3a6a08404e41e0ed97719c6fa9e871f449949211587db1bfd760e9308d1843412856f23f7e26fbb4d9274087c39390
   languageName: node
   linkType: hard
 
@@ -3521,6 +3551,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"escape-string-regexp@npm:^4.0.0":
+  version: 4.0.0
+  resolution: "escape-string-regexp@npm:4.0.0"
+  checksum: 10c0/9497d4dd307d845bd7f75180d8188bb17ea8c151c1edbf6b6717c100e104d629dc2dfb687686181b0f4b7d732c7dfdc4d5e7a8ff72de1b0ca283a75bbb3a9cd9
+  languageName: node
+  linkType: hard
+
 "etag@npm:^1.8.1, etag@npm:~1.8.1":
   version: 1.8.1
   resolution: "etag@npm:1.8.1"
@@ -3624,6 +3661,23 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/f743006175951c80d60d958307c94dc985841030fc757a04a0c69a95cfa4d481d43b5c0e22ebb271727f36c8c441d6f065e92a6fa1680172809037fd80d8897b
+  languageName: node
+  linkType: hard
+
+"expo-location@npm:~58.0.20":
+  version: 58.0.21
+  resolution: "expo-location@npm:58.0.21"
+  dependencies:
+    "@expo/image-utils": "npm:^0.12.7"
+  peerDependencies:
+    expo: "*"
+    expo-task-manager: "*"
+    react: "*"
+    react-native: "*"
+  peerDependenciesMeta:
+    expo-task-manager:
+      optional: true
+  checksum: 10c0/dd2211302f49289c26b5f19820917fbef76bde45b744d0c139d6af6f6a63323b94d61b66a26349e03d9214daf2acc931e5d9fae5514a8ed2fe98049adcdb1515
   languageName: node
   linkType: hard
 
@@ -4165,7 +4219,9 @@ __metadata:
     convex: "npm:^1.31.6"
     expo: "npm:~58.0.21"
     expo-constants: "npm:~58.0.14"
+    expo-font: "npm:~58.0.11"
     expo-linking: "npm:~58.0.15"
+    expo-location: "npm:~58.0.20"
     expo-mcp: "npm:~0.2.1"
     expo-router: "npm:~58.0.28"
     expo-splash-screen: "npm:~58.0.12"
@@ -4180,6 +4236,7 @@ __metadata:
     react-native-safe-area-context: "npm:~5.10.1"
     react-native-screens: "npm:~4.30.0"
     react-native-web: "npm:~0.21.0"
+    react-native-webview: "npm:14.0.1"
     react-native-worklets: "npm:0.13.0"
     typescript: "npm:~6.0.3"
   languageName: unknown
@@ -4448,7 +4505,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"invariant@npm:^2.2.4":
+"invariant@npm:2.2.4, invariant@npm:^2.2.4":
   version: 2.2.4
   resolution: "invariant@npm:2.2.4"
   dependencies:
@@ -6292,6 +6349,19 @@ __metadata:
     react: ^18.0.0 || ^19.0.0
     react-dom: ^18.0.0 || ^19.0.0
   checksum: 10c0/4eee467365d8081b04c9c4cac8ab296cb19a1f06ac0ed30ad3d08172f42557f8dbd7eec9ea651ebfe9f5ddbd1e3326e45d9235e91d82f48e70b07822eb9c3873
+  languageName: node
+  linkType: hard
+
+"react-native-webview@npm:14.0.1":
+  version: 14.0.1
+  resolution: "react-native-webview@npm:14.0.1"
+  dependencies:
+    escape-string-regexp: "npm:^4.0.0"
+    invariant: "npm:2.2.4"
+  peerDependencies:
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/79f906a751a7fb24e41e14ad9ab193f60682ee2ad8d7d448e5db07a02ed7391c057b886515f66e6e560dcb56cdcaa886e936eafdb8f2d43eddfddd52d76b4c02
   languageName: node
   linkType: hard
 

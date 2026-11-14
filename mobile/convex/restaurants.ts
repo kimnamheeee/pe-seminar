@@ -1,5 +1,7 @@
+import { api } from "./_generated/api";
 import { action } from "./_generated/server";
 import { v } from "convex/values";
+import { isRouteWithinSeoul } from "./seoulBoundary";
 
 // 식당 목록 조회 (Kakao Local API)
 export const getRestaurants = action({
@@ -7,17 +9,73 @@ export const getRestaurants = action({
     routeCoords: v.array(v.object({ lat: v.number(), lng: v.number() })),
   },
   handler: async (ctx, args): Promise<Restaurant[]> => {
+    return searchRestaurantsOnRoute(args.routeCoords);
+  },
+});
+
+const stopMatchingArgs = {
+  restaurants: v.array(v.object({
+    id: v.string(), lat: v.number(), lng: v.number(), routeProgress: v.number(),
+  })),
+  legs: v.array(v.object({
+    type: v.union(v.literal("WALK"), v.literal("BUS"), v.literal("SUBWAY")),
+    startProgress: v.number(),
+    polyline: v.array(v.object({ lat: v.number(), lng: v.number() })),
+    stations: v.array(v.object({ name: v.string() })),
+  })),
+};
+
+type StopMatch = {
+  found: boolean;
+  stop?: { mode: "BUS" | "SUBWAY"; name: string; lat: number; lng: number; distanceFromRestaurant: number; distanceFromRoute: number };
+  stopLegIndex?: number;
+};
+
+// New clients receive restaurant candidates and their stop matches together.
+// Unmatched restaurants remain visible; a matched restaurant at 400m+ is excluded.
+export const getRestaurantsWithStops = action({
+  args: {
+    routeCoords: v.array(v.object({ lat: v.number(), lng: v.number() })),
+    legs: stopMatchingArgs.legs,
+  },
+  handler: async (ctx, args) => {
+    const restaurants = await searchRestaurantsOnRoute(args.routeCoords);
+    const isWithinSeoul = isRouteWithinSeoul(args.routeCoords);
+    if (!isWithinSeoul) {
+      const stops = Object.fromEntries(restaurants.map((restaurant) => [restaurant.id, { found: false }])) as Record<string, StopMatch>;
+      return { restaurants, stops, alightingLimitedReason: "OUTSIDE_SEOUL" as const };
+    }
+    if (restaurants.length === 0) {
+      return { restaurants, stops: {} as Record<string, StopMatch>, alightingLimitedReason: null };
+    }
+
+    const stops: Record<string, StopMatch> = await ctx.runQuery(
+      api.transitStops.getNearestStopsForRestaurants,
+      { restaurants: restaurants.map(({ id, lat, lng, routeProgress }) => ({ id, lat, lng, routeProgress })), legs: args.legs }
+    );
+    const eligible = restaurants.filter((restaurant) => {
+      const match = stops[restaurant.id];
+      return !match?.found || !match.stop || match.stop.distanceFromRestaurant < 400;
+    });
+    const eligibleStops: Record<string, StopMatch> = {};
+    for (const restaurant of eligible) eligibleStops[restaurant.id] = stops[restaurant.id] ?? { found: false };
+    return { restaurants: eligible, stops: eligibleStops, alightingLimitedReason: null };
+  },
+});
+
+async function searchRestaurantsOnRoute(routeCoords: Array<{ lat: number; lng: number }>): Promise<Restaurant[]> {
+    const route = routeCoords;
     const apiKey = process.env.KAKAO_REST_API_KEY;
     if (!apiKey) {
       throw new Error("KAKAO_REST_API_KEY 환경변수가 설정되지 않았습니다.");
     }
 
-    if (args.routeCoords.length === 0) {
+    if (route.length === 0) {
       return [];
     }
 
     // 경로를 따라 500m 간격으로 샘플 포인트 생성
-    const samplePoints = sampleAlongRoute(args.routeCoords, 500);
+    const samplePoints = sampleAlongRoute(route, 500);
 
     // 각 샘플 포인트에서 300m 반경 식당 검색
     const allRestaurants: Array<KakaoPlace & { sampleIndex: number }> = [];
@@ -39,7 +97,7 @@ export const getRestaurants = action({
     const withProgress = allRestaurants
       .map((restaurant) => {
         const coord = { lat: Number(restaurant.y), lng: Number(restaurant.x) };
-        const { distance, progress } = getRouteDistanceAndProgress(coord, args.routeCoords);
+        const { distance, progress } = getRouteDistanceAndProgress(coord, route);
         return { ...restaurant, distanceFromRoute: distance, routeProgress: progress };
       })
       .filter((r) => r.distanceFromRoute <= MAX_DISTANCE);
@@ -68,13 +126,13 @@ export const getRestaurants = action({
       name: r.place_name,
       category: extractCategory(r.category_name),
       address: r.road_address_name || r.address_name,
+      placeUrl: (r.place_url || `https://place.map.kakao.com/${r.id}`).replace(/^http:\/\//i, "https://"),
       lat: Number(r.y),
       lng: Number(r.x),
       distanceFromRoute: Math.round(r.distanceFromRoute),
       routeProgress: r.routeProgress, // 경로 진행률 (0~1)
     }));
-  },
-});
+}
 
 // Kakao Local API로 음식점 검색
 async function searchRestaurantsAt(
@@ -247,6 +305,7 @@ interface KakaoPlace {
   category_name: string;
   address_name: string;
   road_address_name: string;
+  place_url?: string;
   x: string; // 경도 (Kakao API returns string)
   y: string; // 위도 (Kakao API returns string)
 }
@@ -256,6 +315,7 @@ interface Restaurant {
   name: string;
   category: string;
   address: string;
+  placeUrl: string;
   lat: number;
   lng: number;
   distanceFromRoute: number;

@@ -1,22 +1,51 @@
 {
   "expo": {
-    "name": "가는김에",
+    "name": "가는 김에",
     "slug": "ganeungime",
     "scheme": "ganeungime",
+    "icon": "./assets/branding/app-icon.png",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "plugins": [
       "expo-router",
-      "expo-splash-screen",
-      "expo-status-bar"
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/branding/app-icon.png",
+          "imageWidth": 128,
+          "resizeMode": "contain",
+          "backgroundColor": "#176B62",
+          "dark": {
+            "image": "./assets/branding/app-icon.png",
+            "backgroundColor": "#176B62"
+          }
+        }
+      ],
+      "expo-status-bar",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "출발지를 현재 위치로 설정하기 위해 위치 정보를 사용합니다."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nami200284.ganeungime"
     },
-    "android": {}
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/app-icon.png",
+        "backgroundColor": "#176B62"
+      },
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    }
   }
 }
