@@ -25,6 +25,10 @@ export const upsertBatch = internalMutation({
     let updated = 0;
 
     for (const stop of args.stops) {
+      const normalizedName = stop.mode === "SUBWAY"
+        ? normalizeName(stop.name, "SUBWAY")
+        : stop.normalizedName;
+      const normalizedStop = { ...stop, normalizedName };
       const existing = await ctx.db
         .query("transitStops")
         .withIndex("by_mode_and_sourceId", (q) =>
@@ -33,15 +37,55 @@ export const upsertBatch = internalMutation({
         .unique();
 
       if (existing) {
-        await ctx.db.patch(existing._id, stop);
+        await ctx.db.patch(existing._id, normalizedStop);
         updated++;
       } else {
-        await ctx.db.insert("transitStops", stop);
+        await ctx.db.insert("transitStops", normalizedStop);
         inserted++;
       }
     }
 
     return { inserted, updated };
+  },
+});
+
+export const normalizeSubwayNamesBatch = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("transitStops")
+      .withIndex("by_mode_and_sourceId", (q) => q.eq("mode", "SUBWAY"))
+      .paginate({ numItems: 100, cursor: args.cursor });
+    let updated = 0;
+
+    for (const stop of page.page) {
+      const normalizedName = normalizeName(stop.name, "SUBWAY");
+      if (stop.normalizedName !== normalizedName) {
+        await ctx.db.patch(stop._id, { normalizedName });
+        updated++;
+      }
+    }
+
+    return { updated, done: page.isDone, cursor: page.continueCursor };
+  },
+});
+
+export const normalizeSubwayNames = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    let cursor: string | null = null;
+    let updated = 0;
+    let done = false;
+
+    while (!done) {
+      const result: { updated: number; done: boolean; cursor: string } =
+        await ctx.runMutation(internal.transitStops.normalizeSubwayNamesBatch, { cursor });
+      updated += result.updated;
+      done = result.done;
+      cursor = result.cursor;
+    }
+
+    return { updated };
   },
 });
 
@@ -113,12 +157,14 @@ export const getNearestStopsForRestaurants = query({
         id: v.string(),
         lat: v.number(),
         lng: v.number(),
+        // Retained in the request shape; stop matching considers all transit legs.
         routeProgress: v.number(),
       })
     ),
     legs: v.array(
       v.object({
         type: v.union(v.literal("WALK"), v.literal("BUS"), v.literal("SUBWAY")),
+        // Retained in the request shape; stop matching considers all transit legs.
         startProgress: v.number(),
         polyline: v.array(v.object({ lat: v.number(), lng: v.number() })),
         stations: v.array(v.object({ name: v.string() })),
@@ -183,7 +229,7 @@ export const getNearestStopsForRestaurants = query({
 
       for (let i = 0; i < args.legs.length; i++) {
         const leg = args.legs[i];
-        if (leg.type === "WALK" || leg.startProgress > restaurant.routeProgress) continue;
+        if (leg.type === "WALK") continue;
 
         for (const station of leg.stations) {
           const key = `${leg.type}:${normalizeName(station.name, leg.type)}`;

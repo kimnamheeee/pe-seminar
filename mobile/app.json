@@ -12,7 +12,14 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F6F8F7"
+          "image": "./assets/branding/app-icon.png",
+          "imageWidth": 128,
+          "resizeMode": "contain",
+          "backgroundColor": "#176B62",
+          "dark": {
+            "image": "./assets/branding/app-icon.png",
+            "backgroundColor": "#176B62"
+          }
         }
       ],
       "expo-status-bar",

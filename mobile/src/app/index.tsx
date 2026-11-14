@@ -1,20 +1,29 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
-import { Dimensions } from "react-native";
+import { useState, useCallback, useRef, useMemo, useEffect, type ComponentRef } from "react";
+import { Dimensions, Modal } from "react-native";
 import {
   View,
   StyleSheet,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   Pressable,
   TextInput,
   Keyboard,
   type TextInputInstance,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
+import { WebView } from "react-native-webview";
+import Animated, {
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { appFontFamily, colors, typography, spacing, radius } from "../lib/theme";
@@ -49,6 +58,7 @@ type Restaurant = {
   name: string;
   category: string;
   address: string;
+  placeUrl: string;
   lat: number;
   lng: number;
   distanceFromRoute: number;
@@ -125,65 +135,47 @@ export default function HomeScreen() {
   const [selectedRouteType, setSelectedRouteType] = useState<RouteTypeTabKey>("ALL");
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [selectedRestaurantCategories, setSelectedRestaurantCategories] = useState<string[]>([]);
   const [restaurantStops, setRestaurantStops] = useState<Record<string, RestaurantStopInfo>>({});
   const [alightingLimitedReason, setAlightingLimitedReason] = useState<"OUTSIDE_SEOUL" | null>(null);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
+  const [expandedRestaurantId, setExpandedRestaurantId] = useState<string | null>(null);
+  const [kakaoPlaceModal, setKakaoPlaceModal] = useState<{ name: string; url: string } | null>(null);
+  const [kakaoPlaceLoading, setKakaoPlaceLoading] = useState(false);
+  const [listViewportHeight, setListViewportHeight] = useState(0);
+  const [lastRestaurantTriggerHeight, setLastRestaurantTriggerHeight] = useState(72);
   const [loading, setLoading] = useState<"routes" | "restaurants" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const bottomSheetRef = useRef<BottomSheet>(null);
+  const bottomSheetAnimatedPosition = useSharedValue(0);
+  const [mapContainerHeight, setMapContainerHeight] = useState(0);
+  const [bottomSheetHandleHeight, setBottomSheetHandleHeight] = useState(0);
+  const bottomSheetCenterAnchorStyle = useAnimatedStyle(() => ({
+    top: Math.max(
+      0,
+      (mapContainerHeight - bottomSheetAnimatedPosition.value) / 2 - bottomSheetHandleHeight + 12
+    ),
+  }));
   const mapRef = useRef<MapView>(null);
   const flatListRef = useRef<FlatList<Restaurant>>(null);
+  const centerAnchorRef = useRef<ComponentRef<typeof View> | null>(null);
+  const restaurantCellRefs = useRef(new Map<string, ComponentRef<typeof View>>());
+  const restaurantTriggerRefs = useRef(new Map<string, ComponentRef<typeof View>>());
+  const listScrollOffsetRef = useRef(0);
+  const listLastScrolledAtRef = useRef(0);
+  const autoExpandOnScrollRef = useRef(false);
+  const autoExpandLastCheckAtRef = useRef(0);
+  const autoExpandRequestIdRef = useRef(0);
+  const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoExpandEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoExpandSuppressedUntilRef = useRef(0);
+  const listIsDraggingRef = useRef(false);
+  const pendingRestaurantCenterRef = useRef<string | null>(null);
+  const pendingRestaurantSelectedAtRef = useRef(0);
   const snapPoints = useMemo(() => ["25%", "50%", "90%"], []);
 
-  // 지도에서 선택한 경우 자동 선택을 일시적으로 비활성화
-  const isMapSelectionRef = useRef(false);
-  const autoSelectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSelectionRef = useRef<Restaurant | null>(null);
-
-  // 자동 선택을 위한 viewability 설정
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 50,
-  }).current;
-
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ item: Restaurant }> }) => {
-    // 지도에서 선택한 경우 자동 선택 무시
-    if (isMapSelectionRef.current) return;
-
-    if (viewableItems.length > 0 && viewableItems[0].item) {
-      const topItem = viewableItems[0].item;
-      pendingSelectionRef.current = topItem;
-
-      // 디바운싱: 스크롤 멈춘 후 200ms 뒤에 선택
-      if (autoSelectTimeoutRef.current) {
-        clearTimeout(autoSelectTimeoutRef.current);
-      }
-      autoSelectTimeoutRef.current = setTimeout(() => {
-        if (pendingSelectionRef.current) {
-          setSelectedRestaurant((prev) => {
-            if (!prev || prev.id !== pendingSelectionRef.current?.id) {
-              return pendingSelectionRef.current;
-            }
-            return prev;
-          });
-        }
-      }, 200);
-    }
-  }).current;
-
-  // 선택된 식당 변경 시 지도 이동
-  useEffect(() => {
-    if (selectedRestaurant) {
-      const latitudeDelta = 0.012;
-      const latitudeOffset = latitudeDelta * 0.4;
-      mapRef.current?.animateToRegion({
-        latitude: selectedRestaurant.lat - latitudeOffset,
-        longitude: selectedRestaurant.lng,
-        latitudeDelta,
-        longitudeDelta: 0.012,
-      });
-    }
-  }, [selectedRestaurant]);
+  const visibleRestaurantsRef = useRef<Restaurant[]>([]);
 
   const getRoutes = useAction(api.routes.getRoutesWithStatus);
   const getRestaurantsWithStops = useAction(api.restaurants.getRestaurantsWithStops);
@@ -259,14 +251,184 @@ export default function HomeScreen() {
     [routes, selectedRouteType]
   );
 
+  const restaurantCategories = useMemo(
+    () => Array.from(new Set(restaurants.map((restaurant) => restaurant.category).filter(Boolean))),
+    [restaurants]
+  );
+  const visibleRestaurants = useMemo(
+    () => selectedRestaurantCategories.length === 0
+      ? restaurants
+      : restaurants.filter((restaurant) => selectedRestaurantCategories.includes(restaurant.category)),
+    [restaurants, selectedRestaurantCategories]
+  );
+  const lastVisibleRestaurantId = visibleRestaurants[visibleRestaurants.length - 1]?.id ?? null;
+  const lastRestaurantStopInfo = lastVisibleRestaurantId ? restaurantStops[lastVisibleRestaurantId] : undefined;
+  let lastRestaurantGuideStepCount = 0;
+  if (lastRestaurantStopInfo) {
+    lastRestaurantGuideStepCount = 2; // 출발지와 도착 식당
+    if (alightingLimitedReason === "OUTSIDE_SEOUL") {
+      lastRestaurantGuideStepCount += 1;
+    } else if (selectedRoute) {
+      const stopLegIndex = lastRestaurantStopInfo.stopLegIndex ?? -1;
+      for (let index = 0; index < selectedRoute.legs.length; index++) {
+        const leg = selectedRoute.legs[index];
+        if (stopLegIndex >= 0 && index > stopLegIndex) continue;
+        if (leg.type === "WALK" || !leg.vehicleInfo) continue;
+        const isStopLeg = index === stopLegIndex;
+        const alightStop = isStopLeg && lastRestaurantStopInfo.found && lastRestaurantStopInfo.stop
+          ? lastRestaurantStopInfo.stop.name
+          : leg.endName;
+        if (leg.startName !== alightStop) lastRestaurantGuideStepCount += 1;
+      }
+      if (lastRestaurantStopInfo.found && lastRestaurantStopInfo.stop) {
+        lastRestaurantGuideStepCount += 1;
+      }
+    }
+  }
+  const estimatedExpandedLastCellHeight = lastRestaurantTriggerHeight + (
+    lastRestaurantGuideStepCount > 0
+      ? spacing.sm + spacing.lg + spacing.xs + lastRestaurantGuideStepCount * (typography.body.lineHeight * 2 + spacing.sm)
+      : 0
+  );
+  const centerGuideOffsetInList = Math.min(
+    listViewportHeight,
+    Math.max(0, listViewportHeight / 2 + bottomSheetHandleHeight / 2 - 12)
+  );
+  const bottomSpaceForLastCell = listViewportHeight - centerGuideOffsetInList - estimatedExpandedLastCellHeight / 2;
+  const bottomSpaceForLastTrigger = listViewportHeight - centerGuideOffsetInList - lastRestaurantTriggerHeight / 2;
+  visibleRestaurantsRef.current = visibleRestaurants;
+  const selectedRestaurantRef = useRef<Restaurant | null>(selectedRestaurant);
+  selectedRestaurantRef.current = selectedRestaurant;
+
+  const centerRestaurantBlockOnGuide = useCallback((restaurantId: string) => {
+    const restaurantCell = restaurantCellRefs.current.get(restaurantId);
+    const centerAnchor = centerAnchorRef.current;
+    if (!restaurantCell || !centerAnchor) return;
+
+    restaurantCell.measureInWindow((_cellX, cellY, _cellWidth, cellHeight) => {
+      centerAnchor.measureInWindow((_anchorX, lineY, _anchorWidth, lineHeight) => {
+        const difference = cellY + cellHeight / 2 - (lineY + lineHeight / 2);
+        flatListRef.current?.scrollToOffset({
+          offset: Math.max(0, listScrollOffsetRef.current + difference),
+          animated: true,
+        });
+      });
+    });
+  }, []);
+
+  const scheduleRestaurantCenterWhenIdle = useCallback((restaurantId: string) => {
+    const waitForIdle = () => {
+      if (pendingRestaurantCenterRef.current !== restaurantId) return;
+
+      const now = Date.now();
+      const selectionHasSettled = now - pendingRestaurantSelectedAtRef.current >= 220;
+      const listHasSettled = now - listLastScrolledAtRef.current >= 160;
+      if (!selectionHasSettled || !listHasSettled) {
+        setTimeout(waitForIdle, 60);
+        return;
+      }
+
+      pendingRestaurantCenterRef.current = null;
+      requestAnimationFrame(() => centerRestaurantBlockOnGuide(restaurantId));
+    };
+
+    setTimeout(waitForIdle, 220);
+  }, [centerRestaurantBlockOnGuide]);
+
+  const autoExpandRestaurantAtCenter = useCallback(async () => {
+    if (!autoExpandOnScrollRef.current || Date.now() < autoExpandSuppressedUntilRef.current) return null;
+
+    const requestId = ++autoExpandRequestIdRef.current;
+    const anchor = centerAnchorRef.current;
+    if (!anchor) return null;
+
+    const visibleIds = new Set(visibleRestaurantsRef.current.map((restaurant) => restaurant.id));
+    const candidates = Array.from(restaurantTriggerRefs.current.entries())
+      .filter(([id]) => visibleIds.has(id));
+    if (candidates.length === 0) return null;
+
+    const measureCenterY = (view: ComponentRef<typeof View>) => new Promise<number>((resolve) => {
+      view.measureInWindow((_x, y, _width, height) => resolve(y + height / 2));
+    });
+
+    const anchorY = await measureCenterY(anchor);
+    const measured = await Promise.all(candidates.map(async ([id, view]) => ({
+      id,
+      centerY: await measureCenterY(view),
+    })));
+
+    if (requestId !== autoExpandRequestIdRef.current || !autoExpandOnScrollRef.current) return null;
+    if (Date.now() < autoExpandSuppressedUntilRef.current) return null;
+
+    const distanceFromCenter = (centerY: number) => Math.abs(centerY - anchorY);
+    const currentId = selectedRestaurantRef.current?.id;
+    const current = measured.find((candidate) => candidate.id === currentId);
+    const nearest = measured.reduce((best, candidate) =>
+      distanceFromCenter(candidate.centerY) < distanceFromCenter(best.centerY) ? candidate : best
+    );
+
+    // Keep the current item while it is near the guide; switch after another row clearly takes its place.
+    const keepCurrent = current && distanceFromCenter(current.centerY) <= 120 &&
+      (nearest.id === current.id || distanceFromCenter(nearest.centerY) + 28 >= distanceFromCenter(current.centerY));
+    const reachedListStart = listScrollOffsetRef.current <= 2;
+    const firstRestaurantId = visibleRestaurantsRef.current[0]?.id;
+    const chosenId = reachedListStart && firstRestaurantId
+      ? firstRestaurantId
+      : keepCurrent
+        ? current.id
+        : distanceFromCenter(nearest.centerY) <= 96
+          ? nearest.id
+          : null;
+    const chosen = chosenId ? visibleRestaurantsRef.current.find((restaurant) => restaurant.id === chosenId) ?? null : null;
+
+    setSelectedRestaurant((currentSelection) => currentSelection?.id === chosen?.id ? currentSelection : chosen);
+    return chosen?.id ?? null;
+  }, []);
+
+  const scheduleAutoExpandDuringScroll = useCallback(() => {
+    if (!autoExpandOnScrollRef.current || Date.now() < autoExpandSuppressedUntilRef.current) return;
+
+    if (autoExpandEndTimerRef.current) clearTimeout(autoExpandEndTimerRef.current);
+    autoExpandEndTimerRef.current = setTimeout(() => {
+      autoExpandEndTimerRef.current = null;
+      void (async () => {
+        const restaurantId = await autoExpandRestaurantAtCenter();
+        if (Date.now() - listLastScrolledAtRef.current < 100) return;
+        autoExpandOnScrollRef.current = false;
+        if (restaurantId) {
+          setExpandedRestaurantId(restaurantId);
+          if (restaurantId === visibleRestaurantsRef.current[0]?.id && listScrollOffsetRef.current <= 2) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false }));
+            });
+          }
+        }
+      })();
+    }, 100);
+
+    const elapsed = Date.now() - autoExpandLastCheckAtRef.current;
+    if (elapsed >= 90) {
+      autoExpandLastCheckAtRef.current = Date.now();
+      void autoExpandRestaurantAtCenter();
+      return;
+    }
+
+    if (autoExpandTimerRef.current) return;
+    autoExpandTimerRef.current = setTimeout(() => {
+      autoExpandTimerRef.current = null;
+      autoExpandLastCheckAtRef.current = Date.now();
+      void autoExpandRestaurantAtCenter();
+    }, 90 - elapsed);
+  }, [autoExpandRestaurantAtCenter]);
+
   // 지도 영역 조정 (바텀시트 50% 높이 고려)
   const screenHeight = Dimensions.get("window").height;
   const bottomSheetHeight = screenHeight * 0.5; // 50% snap point
 
   // 식당 로드 완료 시 첫 번째 식당 근처로 줌
   useEffect(() => {
-    if (restaurants.length > 0 && mapRef.current) {
-      const firstRestaurant = restaurants[0];
+    if (visibleRestaurants.length > 0 && mapRef.current) {
+      const firstRestaurant = visibleRestaurants[0];
       setTimeout(() => {
         mapRef.current?.animateToRegion({
           latitude: firstRestaurant.lat - 0.008, // 바텀시트 고려 오프셋
@@ -276,7 +438,32 @@ export default function HomeScreen() {
         });
       }, 100);
     }
-  }, [restaurants]);
+  }, [visibleRestaurants]);
+
+  useEffect(() => {
+    if (selectedRestaurant && !visibleRestaurants.some((restaurant) => restaurant.id === selectedRestaurant.id)) {
+      setSelectedRestaurant(null);
+    }
+    if (expandedRestaurantId && !visibleRestaurants.some((restaurant) => restaurant.id === expandedRestaurantId)) {
+      setExpandedRestaurantId(null);
+    }
+  }, [selectedRestaurant, expandedRestaurantId, visibleRestaurants]);
+
+  useEffect(() => {
+    if (!selectedRestaurant || !mapRef.current) return;
+
+    const latitudeDelta = 0.012;
+    mapRef.current.animateToRegion({
+      latitude: selectedRestaurant.lat - latitudeDelta * 0.4,
+      longitude: selectedRestaurant.lng,
+      latitudeDelta,
+      longitudeDelta: 0.012,
+    }, 250);
+  }, [selectedRestaurant]);
+
+  useEffect(() => {
+    setLastRestaurantTriggerHeight(72);
+  }, [lastVisibleRestaurantId]);
 
   const getStopInfoForRestaurant = useCallback((restaurantId: string) => {
     return restaurantStops[restaurantId] || null;
@@ -411,7 +598,9 @@ export default function HomeScreen() {
     async (route: Route) => {
       setSelectedRoute(route);
       setSelectedRestaurant(null);
+      setExpandedRestaurantId(null);
       setRestaurants([]);
+      setSelectedRestaurantCategories([]);
       setRestaurantStops({});
       setAlightingLimitedReason(null);
       setLoadingRestaurants(true);
@@ -423,6 +612,9 @@ export default function HomeScreen() {
           legs: buildStopMatchingLegs(route),
         });
         setRestaurants(result.restaurants);
+        const firstRestaurant = result.restaurants[0] ?? null;
+        setSelectedRestaurant(firstRestaurant);
+        setExpandedRestaurantId(firstRestaurant?.id ?? null);
         setRestaurantStops(result.stops);
         setAlightingLimitedReason(result.alightingLimitedReason);
       } catch (e) {
@@ -438,28 +630,37 @@ export default function HomeScreen() {
   );
 
   // 식당 선택
-  const handleRestaurantSelect = useCallback((restaurant: Restaurant, fromMap = false) => {
-    setSelectedRestaurant(restaurant);
-
-    if (fromMap) {
-      // 지도에서 선택한 경우: 자동 선택 일시 비활성화 + 리스트 스크롤
-      isMapSelectionRef.current = true;
-
-      const index = restaurants.findIndex((r) => r.id === restaurant.id);
-      if (index >= 0 && flatListRef.current) {
-        flatListRef.current.scrollToIndex({
-          index,
-          animated: true,
-          viewPosition: 0, // 상단에 위치
-        });
-      }
-
-      // 스크롤 완료 후 자동 선택 다시 활성화 (500ms 후)
-      setTimeout(() => {
-        isMapSelectionRef.current = false;
-      }, 500);
+  const handleRestaurantSelect = useCallback((restaurant: Restaurant) => {
+    autoExpandOnScrollRef.current = false;
+    autoExpandRequestIdRef.current += 1;
+    if (autoExpandTimerRef.current) {
+      clearTimeout(autoExpandTimerRef.current);
+      autoExpandTimerRef.current = null;
     }
-  }, [restaurants]);
+    if (autoExpandEndTimerRef.current) {
+      clearTimeout(autoExpandEndTimerRef.current);
+      autoExpandEndTimerRef.current = null;
+    }
+    if (visibleRestaurants.some((r) => r.id === restaurant.id)) {
+      pendingRestaurantCenterRef.current = restaurant.id;
+      pendingRestaurantSelectedAtRef.current = Date.now();
+      const index = visibleRestaurants.findIndex((r) => r.id === restaurant.id);
+      if (!restaurantCellRefs.current.has(restaurant.id)) {
+        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      }
+      scheduleRestaurantCenterWhenIdle(restaurant.id);
+    }
+    setSelectedRestaurant(restaurant);
+    setExpandedRestaurantId(restaurant.id);
+  }, [scheduleRestaurantCenterWhenIdle, visibleRestaurants]);
+
+  const toggleRestaurantCategory = useCallback((category: string) => {
+    setSelectedRestaurantCategories((current) => current.includes(category)
+      ? current.filter((selected) => selected !== category)
+      : [...current, category]
+    );
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
 
   // 뒤로가기 (경로 선택 화면으로)
   // 지도 → 경로 선택
@@ -864,7 +1065,10 @@ export default function HomeScreen() {
 
   // 경로 상세 + 식당 목록 + 지도
   return (
-    <View style={styles.mapContainer}>
+    <View
+      style={styles.mapContainer}
+      onLayout={(event) => setMapContainerHeight(event.nativeEvent.layout.height)}
+    >
       <Header onBack={handleBackToRoutes} />
       {alightingLimitedReason === "OUTSIDE_SEOUL" && (
         <View style={styles.alightingLimitBanner}>
@@ -1022,14 +1226,14 @@ export default function HomeScreen() {
         />
 
         {/* 식당 마커 - 선택된 건 크게/컬러, 나머지는 작게/회색 */}
-        {restaurants.map((restaurant) => {
+        {visibleRestaurants.map((restaurant) => {
           const isSelected = selectedRestaurant?.id === restaurant.id;
           return (
             <Marker
               key={restaurant.id}
               coordinate={{ latitude: restaurant.lat, longitude: restaurant.lng }}
               anchor={{ x: 0.5, y: 1 }}
-              onPress={() => handleRestaurantSelect(restaurant, true)}
+              onPress={() => handleRestaurantSelect(restaurant)}
             >
               <View style={isSelected ? styles.restaurantMarkerSelected : styles.restaurantMarkerDefault}>
                 <Ionicons
@@ -1072,6 +1276,7 @@ export default function HomeScreen() {
       {!loadingRestaurants && (
         <BottomSheet
           ref={bottomSheetRef}
+          animatedPosition={bottomSheetAnimatedPosition}
           snapPoints={snapPoints}
           index={1}
           backgroundStyle={styles.bottomSheetBackground}
@@ -1081,39 +1286,101 @@ export default function HomeScreen() {
           enableOverDrag={false}
           enableDynamicSizing={false}
           handleComponent={() => (
-            <View style={styles.bottomSheetHandle}>
+            <View
+              style={styles.bottomSheetHandle}
+              onLayout={(event) => setBottomSheetHandleHeight(event.nativeEvent.layout.height)}
+            >
               <View style={styles.bottomSheetHandleBar} />
             </View>
           )}
         >
-        {/* 식당 목록 */}
         {restaurants.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              경로 주변 1km 이내에 식당이 없습니다.
-            </Text>
+            <Text style={styles.emptyText}>경로 주변에 식당 후보가 없어요.</Text>
+          </View>
+        ) : visibleRestaurants.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>선택한 카테고리의 식당이 없어요.</Text>
           </View>
         ) : (
           <BottomSheetFlatList
             ref={flatListRef as any}
-            data={restaurants}
-            keyExtractor={(item) => item.id}
+            data={visibleRestaurants}
+            keyExtractor={(item: Restaurant) => item.id}
+            contentContainerStyle={{
+              paddingBottom: Math.max(0, bottomSpaceForLastCell, bottomSpaceForLastTrigger) + spacing.xxl * 5,
+            }}
+            stickyHeaderIndices={restaurantCategories.length > 0 ? [0] : undefined}
+            ListHeaderComponent={restaurantCategories.length > 0 ? (
+              <View
+                style={styles.categoryFilterRow}
+              >
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.categoryFilterList}
+                >
+                  {restaurantCategories.map((category) => {
+                    const isSelected = selectedRestaurantCategories.includes(category);
+                    return (
+                      <Pressable
+                        key={category}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${category} 카테고리 필터`}
+                        accessibilityState={{ selected: isSelected }}
+                        onPress={() => toggleRestaurantCategory(category)}
+                        style={({ pressed }) => [
+                          styles.categoryChip,
+                          isSelected && styles.categoryChipSelected,
+                          pressed && styles.categoryChipPressed,
+                        ]}
+                      >
+                        <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
+                          {category}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : undefined}
             ItemSeparatorComponent={() => (
-              <View style={{ height: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing.md }} />
+              <View style={{ height: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing.xl }} />
             )}
-            renderItem={({ item }) => {
+            renderItem={({ item }: { item: Restaurant }) => {
               const isSelected = selectedRestaurant?.id === item.id;
+              const isExpanded = expandedRestaurantId === item.id;
               return (
-                <View>
-                  <RestaurantItem
-                    name={item.name}
-                    category={item.category}
-                    address={item.address}
-                    distanceFromRoute={item.distanceFromRoute}
-                    selected={isSelected}
-                    onPress={() => handleRestaurantSelect(item)}
-                  />
-                  {/* 후보 비교 중에는 하차 지점만 요약하고, 선택한 식당에만 상세 안내를 펼친다. */}
+                <Animated.View
+                  style={[
+                    isSelected && styles.restaurantCellSelected,
+                  ]}
+                  ref={(node: ComponentRef<typeof View> | null) => {
+                    if (node) restaurantCellRefs.current.set(item.id, node);
+                    else restaurantCellRefs.current.delete(item.id);
+                  }}
+                >
+                  <View
+                    ref={(node) => {
+                      if (node) restaurantTriggerRefs.current.set(item.id, node);
+                      else restaurantTriggerRefs.current.delete(item.id);
+                    }}
+                    onLayout={(event) => {
+                      if (item.id === lastVisibleRestaurantId) {
+                        setLastRestaurantTriggerHeight(event.nativeEvent.layout.height);
+                      }
+                    }}
+                  >
+                    <RestaurantItem
+                      name={item.name}
+                      category={item.category}
+                      address={item.address}
+                      distanceFromRoute={item.distanceFromRoute}
+                      selected={isSelected}
+                      onPress={() => handleRestaurantSelect(item)}
+                    />
+                  </View>
+                  {/* 스크롤 선택은 강조만 바꾸고, 직접 선택한 식당에만 상세 안내를 펼친다. */}
                   {(() => {
                     const itemStopInfo = getStopInfoForRestaurant(item.id);
                     if (!itemStopInfo) return null;
@@ -1122,7 +1389,7 @@ export default function HomeScreen() {
 
                     return (
                       <>
-                        {!isSelected && (
+                        {!isExpanded && (
                           <View style={styles.stopSummary}>
                             <Ionicons
                               name={itemStopInfo.stop?.mode === "SUBWAY" ? "train-outline" : "bus-outline"}
@@ -1151,8 +1418,11 @@ export default function HomeScreen() {
                           </View>
                         )}
 
-                        {isSelected && (
-                          <View style={styles.routeGuideSection}>
+                        {isExpanded && (
+                          <Animated.View
+                            style={styles.routeGuideSection}
+                            entering={FadeInDown.duration(170)}
+                          >
                             <View style={styles.routeStep}>
                               <View style={[styles.routeStepIcon, styles.routeStepIconOrigin]}>
                                 <Ionicons name="location" size={16} color="#FFFFFF" />
@@ -1163,7 +1433,7 @@ export default function HomeScreen() {
                             {alightingLimitedReason === "OUTSIDE_SEOUL" ? (
                               <View style={styles.routeStep}>
                                 <View style={[styles.routeStepIcon, styles.routeStepIconWalk]}>
-                                  <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+                                <Ionicons name="information-circle-outline" size={16} color={colors.primary} />
                                 </View>
                                 <Text style={styles.routeStepText}>
                                   서울 경계 밖 경로라 하차 안내를 제공하지 않아요.
@@ -1198,7 +1468,7 @@ export default function HomeScreen() {
                             {itemStopInfo.found && itemStopInfo.stop && (
                               <View style={styles.routeStep}>
                                 <View style={[styles.routeStepIcon, styles.routeStepIconWalk]}>
-                                  <Ionicons name="navigate-outline" size={16} color={colors.textSecondary} />
+                                <Ionicons name="navigate-outline" size={16} color={colors.primary} />
                                 </View>
                                 <Text style={styles.routeStepText}>
                                   식당까지 직선거리 {itemStopInfo.stop.distanceFromRestaurant}m
@@ -1206,36 +1476,119 @@ export default function HomeScreen() {
                               </View>
                             )}
 
-                            <View style={styles.routeStep}>
+                            <View style={[styles.routeStep]}>
                               <View style={[styles.routeStepIcon, styles.routeStepIconDestination]}>
                                 <Ionicons name="restaurant" size={16} color="#FFFFFF" />
                               </View>
                               <Text style={styles.routeStepText}>도착: {item.name}</Text>
+                              <Pressable
+                                accessibilityRole="link"
+                                accessibilityLabel={`${item.name} 상세 보기`}
+                                onPress={() => {
+                                  setKakaoPlaceLoading(true);
+                                  const secureUrl = item.placeUrl.replace(/^http:\/\//i, "https://");
+                                  setKakaoPlaceModal({ name: item.name, url: secureUrl });
+                                }}
+                                style={({ pressed }) => [styles.kakaoMapLink, pressed && styles.kakaoMapLinkPressed]}
+                                hitSlop={6}
+                              >
+                                <Ionicons name="open-outline" size={14} color={colors.primary} />
+                                <Text style={styles.kakaoMapLinkText}>상세 보기</Text>
+                              </Pressable>
                             </View>
-                          </View>
+                          </Animated.View>
                         )}
                       </>
                     );
                   })()}
-                </View>
+                </Animated.View>
               );
             }}
-            onViewableItemsChanged={onViewableItemsChanged}
-            viewabilityConfig={viewabilityConfig}
             onScrollToIndexFailed={(info) => {
-              // 리스트가 아직 렌더링 중일 때의 fallback
+              flatListRef.current?.scrollToOffset({
+                offset: Math.max(0, info.averageItemLength * info.index),
+                animated: false,
+              });
               setTimeout(() => {
                 flatListRef.current?.scrollToIndex({
                   index: info.index,
                   animated: true,
-                  viewPosition: 0,
+                  viewPosition: 0.5,
                 });
               }, 100);
             }}
+            {...({
+              onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+                listScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+                listLastScrolledAtRef.current = Date.now();
+                if (listIsDraggingRef.current) autoExpandOnScrollRef.current = true;
+                scheduleAutoExpandDuringScroll();
+              },
+              onScrollBeginDrag: () => {
+                listIsDraggingRef.current = true;
+                autoExpandOnScrollRef.current = true;
+                autoExpandSuppressedUntilRef.current = 0;
+                listLastScrolledAtRef.current = Date.now();
+                setExpandedRestaurantId(null);
+              },
+              onScrollEndDrag: () => {
+                listIsDraggingRef.current = false;
+              },
+            } as any)}
+            onLayout={(event) => setListViewportHeight(event.nativeEvent.layout.height)}
           />
         )}
+        <Animated.View
+          ref={centerAnchorRef}
+          pointerEvents="none"
+          style={[styles.bottomSheetCenterAnchor, bottomSheetCenterAnchorStyle]}
+        />
       </BottomSheet>
       )}
+      <Modal
+        visible={kakaoPlaceModal !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setKakaoPlaceModal(null)}
+        onDismiss={() => setKakaoPlaceLoading(false)}
+      >
+        <SafeAreaView style={styles.kakaoPlaceModal} edges={["top", "bottom"]}>
+          <View style={styles.kakaoPlaceModalHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="카카오맵 상세 닫기"
+              onPress={() => setKakaoPlaceModal(null)}
+              style={styles.kakaoPlaceCloseButton}
+            >
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </Pressable>
+            <Text numberOfLines={1} style={styles.kakaoPlaceModalTitle}>
+              {kakaoPlaceModal?.name ?? "장소 상세"}
+            </Text>
+            <View style={styles.kakaoPlaceHeaderSpacer} />
+          </View>
+          {kakaoPlaceModal && (
+            <View style={styles.kakaoPlaceWebViewContainer}>
+              <WebView
+                key={kakaoPlaceModal.url}
+                source={{ uri: kakaoPlaceModal.url }}
+                style={styles.kakaoPlaceWebView}
+                onLoadStart={() => setKakaoPlaceLoading(true)}
+                onLoadEnd={() => setKakaoPlaceLoading(false)}
+                startInLoadingState
+                javaScriptEnabled
+                domStorageEnabled
+              />
+              {kakaoPlaceLoading && (
+                <View style={styles.kakaoPlaceLoading}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.kakaoPlaceLoadingText}>카카오맵을 불러오는 중...</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -1244,6 +1597,51 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  kakaoPlaceModal: {
+    flex: 1,
+    backgroundColor: colors.surface,
+  },
+  kakaoPlaceModalHeader: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  kakaoPlaceCloseButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  kakaoPlaceModalTitle: {
+    ...typography.subtitle,
+    color: colors.textPrimary,
+    flex: 1,
+    textAlign: "center",
+  },
+  kakaoPlaceHeaderSpacer: {
+    width: 44,
+  },
+  kakaoPlaceWebViewContainer: {
+    flex: 1,
+  },
+  kakaoPlaceWebView: {
+    flex: 1,
+    backgroundColor: colors.surface,
+  },
+  kakaoPlaceLoading: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+  },
+  kakaoPlaceLoadingText: {
+    ...typography.caption,
+    color: colors.textSecondary,
   },
   homeContent: {
     flex: 1,
@@ -1649,6 +2047,53 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     marginBottom: spacing.sm,
   },
+  categoryFilterRow: {
+    justifyContent: "center",
+    paddingVertical: spacing.md,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  bottomSheetCenterAnchor: {
+    position: "absolute",
+    left: 0,
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
+  categoryFilterList: {
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+  },
+  categoryChip: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: "transparent",
+    backgroundColor: colors.background,
+  },
+  categoryChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryLight,
+  },
+  categoryChipPressed: {
+    opacity: 0.72,
+  },
+  categoryChipText: {
+    ...typography.small,
+    color: colors.textSecondary,
+    fontWeight: "500",
+  },
+  categoryChipTextSelected: {
+    color: colors.primary,
+    fontWeight: "700",
+  },
   bottomSheetHandleText: {
     ...typography.subtitle,
     color: colors.textPrimary,
@@ -1660,10 +2105,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     width: 40,
   },
+  restaurantCellSelected: {
+    backgroundColor: colors.primaryLight,
+  },
   routeGuideSection: {
     padding: spacing.lg,
     paddingTop: spacing.sm,
-    backgroundColor: colors.surface,
+    paddingBottom: spacing.lg,
     marginBottom: spacing.xs,
   },
   routeGuideSectionSelected: {
@@ -1734,6 +2182,23 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     flex: 1,
   },
+  kakaoMapLink: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginLeft: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: 8,
+  },
+  kakaoMapLinkPressed: {
+    backgroundColor: colors.background,
+  },
+  kakaoMapLinkText: {
+    ...typography.small,
+    color: colors.primary,
+    fontWeight: "600",
+  },
   routeStepBus: {
     fontWeight: "600",
     color: colors.primary,
@@ -1742,7 +2207,7 @@ const styles = StyleSheet.create({
     backgroundColor: "green",
   },
   routeStepIconWalk: {
-    backgroundColor: colors.border,
+    backgroundColor: "#D7E8E5",
   },
   routeStepIconDestination: {
     backgroundColor: colors.restaurantMarker,

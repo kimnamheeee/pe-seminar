@@ -126,6 +126,7 @@ async function searchRestaurantsOnRoute(routeCoords: Array<{ lat: number; lng: n
       name: r.place_name,
       category: extractCategory(r.category_name),
       address: r.road_address_name || r.address_name,
+      placeUrl: (r.place_url || `https://place.map.kakao.com/${r.id}`).replace(/^http:\/\//i, "https://"),
       lat: Number(r.y),
       lng: Number(r.x),
       distanceFromRoute: Math.round(r.distanceFromRoute),
@@ -304,6 +305,7 @@ interface KakaoPlace {
   category_name: string;
   address_name: string;
   road_address_name: string;
+  place_url?: string;
   x: string; // 경도 (Kakao API returns string)
   y: string; // 위도 (Kakao API returns string)
 }
@@ -313,6 +315,7 @@ interface Restaurant {
   name: string;
   category: string;
   address: string;
+  placeUrl: string;
   lat: number;
   lng: number;
   distanceFromRoute: number;
